@@ -1,0 +1,62 @@
+// Unscented Kalman Filter File
+// Created by Dan Kassen
+// Hand-Converted to C from Matlab file written by previous senior design team
+
+#include <stm32f4xx.h>
+#include <misc.h>			
+#include <stm32f4xx_usart.h>
+#include <stm32f4xx_spi.h>
+#include <stm32f4xx_tim.h>
+#include <stm32f4xx_flash.h>
+#include "arm_math.h" 
+#include "math_helper.h" 
+
+double determ(double *matr, int n);
+
+double value = 0;
+double detout = 0;
+
+int main(void)
+{
+	double P[25] = {5, 2, 0, 0, -2, 0, 1, 4, 3, 2, 0, 0, 2, 6, 3, 0, 0, 3, 4, 1, 0, 0, 0, 0, 2};
+	int size = 5;
+
+	value = determ(P,size);
+
+	while(1){
+	}
+
+// i need to invert a 10 x 10 matrix. good lord.
+}
+
+double determ(double *matr, int n)
+{
+	int i;
+	int j;
+	int k;
+	double d[1] = {0};
+	double test[25] = {0};
+
+	detout = 1;
+	
+	for(i=0;i<n;i++){
+		for(j=0;j<n;j++){
+			test[i*n+j] = matr[i*n+j];
+		}
+	}
+	
+	for(i=0;i<(n-1);i++){
+		for(k=1;k<(n-i);k++){
+			d[0] = test[(i+k)*n+i]/test[i*n+i];
+			for(j=i;j<n;j++){
+						test[(i+k)*n + j] = test[(i+k)*n+j] - d[0]*test[i*n+j];
+			}
+		}
+	}
+	
+	for(k=0;k<n;k++){
+		detout = detout*test[k*n+k];
+	}
+	
+	return detout;
+}

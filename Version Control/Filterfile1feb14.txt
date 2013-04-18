@@ -1,0 +1,145 @@
+// Unscented Kalman Filter File
+// Created by Dan Kassen
+// Hand-Converted to C from Matlab file written by previous senior design team
+
+#include <stm32f4xx.h>
+#include <misc.h>			
+#include <stm32f4xx_usart.h>
+#include <stm32f4xx_spi.h>
+#include <stm32f4xx_tim.h>
+#include <stm32f4xx_flash.h>
+#include "arm_math.h" 
+#include "math_helper.h" 
+
+float32_t V(float32_t u, float32_t v, float32_t w);
+float32_t alpha(float32_t u, float32_t w);
+float32_t beta(float32_t u, float32_t v, float32_t w);
+float32_t qbar(float32_t u, float32_t v, float32_t w);
+
+float32_t Cx(float32_t u, float32_t w, float32_t i);
+float32_t Cy(float32_t u, float32_t v, float32_t w, float32_t p, float32_t r);
+float32_t Cz(float32_t u, float32_t w, float32_t i);
+
+float32_t Cl(float32_t u, float32_t v, float32_t w, float32_t p, float32_t r);
+float32_t Cm(float32_t u, float32_t w, float32_t q);
+float32_t Cn(float32_t u, float32_t v, float32_t w, float32_t p, float32_t r);
+
+float32_t L(float32_t u, float32_t v, float32_t w, float32_t p, float32_t r);
+float32_t M(float32_t u, float32_t v, float32_t w, float32_t q);
+float32_t N(float32_t u, float32_t v, float32_t w, float32_t p, float32_t r);
+
+void Delay(__IO uint32_t nCount) {
+   while(nCount--) {
+  }
+}
+
+float gravity = 9.81;
+float rho = 1026;
+float mass = 3.402;
+float buoyancy;
+int motor = 1;
+float S = .182775;
+float b = 1.32;
+float c = 0.08;
+float Ixx = .8742;
+float Iyy = .9032;
+float Izz = .355;
+float Ixz = .056;
+
+// Covariance Matrix
+float Q[24][24] = {
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0.000001, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0.000001, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0.000001, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0.000001, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0.000001, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0.000001, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+};
+
+// Sensor Covariances
+float R[10][10] = {
+	0.00125, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+	0, 0.00125, 0, 0, 0, 0, 0, 0, 0, 0, 
+	0, 0, 0.00125, 0, 0, 0, 0, 0, 0, 0, 
+	0, 0, 0, 0.009*9.81, 0, 0, 0, 0, 0, 0, 
+	0, 0, 0, 0, 0.009*9.81, 0, 0, 0, 0, 0, 
+	0, 0, 0, 0, 0, 0.009*9.81, 0, 0, 0, 0, 
+	0, 0, 0, 0, 0, 0, 0.0157, 0, 0, 0, 
+	0, 0, 0, 0, 0, 0, 0, 0.0157, 0, 0, 
+	0, 0, 0, 0, 0, 0, 0, 0, 0.0157, 0, 
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0.5, 
+};
+
+float i;
+float di;
+float h_cg;
+float cbuoy;
+float z;
+float netbuoyancy;
+
+
+int main(void) {
+	
+	netbuoyancy = mass*gravity + cbuoy;
+	
+	while(1){}
+
+}	
+
+float32_t V(float32_t u, float32_t v, float32_t w)
+{return sqrt(u*u + v*v + w*w);}
+
+float32_t alpha(float32_t u, float32_t w)
+{return w/u;}
+
+float32_t beta(float32_t u, float32_t v, float32_t w)
+{return v/V(u,v,w);}
+	
+float32_t qbar(float32_t u, float32_t v, float32_t w)
+{return (rho*V(u,v,w)*V(u,v,w))/2;}
+	
+float32_t Cx(float32_t u, float32_t w, float32_t i)
+{return 4.176*(alpha(u,w)+0.875*i)*alpha(u,w) - (0.010652+0.0393*(4.176*(alpha(u,w)+0.875*i))*(4.176*(alpha(u,w)+0.875*i)))*(1-(alpha(u,w)*alpha(u,w))/2);}
+
+float32_t Cy(float32_t u, float32_t v, float32_t w, float32_t p, float32_t r)
+{return 0.39569*beta(u,v,w) - 0.021877*p + 0.46644*r;}
+
+float32_t Cz(float32_t u, float32_t w, float32_t i)
+{return -4.176*(alpha(u,w)+0.875*i)*(1-(alpha(u,w)*alpha(u,w))) - (0.010652+0.0393*(4.176*(alpha(u,w)+0.875*i)*(4.176*(alpha(u,w)+0.875*i)))*alpha(u,w));}
+
+float32_t Cl(float32_t u, float32_t v, float32_t w, float32_t p, float32_t r)
+{return -0.52494*p + 0.00014753*beta(u,w,v) + 0.0013735*r + 64.7*(-di);}
+	
+float32_t Cm(float32_t u, float32_t w, float32_t q)
+{return (-2.21 + 3.06*i + 4*(h_cg-0.25))*(alpha(u,w)+0.875*i) + 0.9*i - 18.305*q;}
+	
+float32_t Cn(float32_t u, float32_t v, float32_t w, float32_t p, float32_t r)
+{return -.22218*beta(u,v,w) + 0.012151*p - 0.26078*r;}
+	
+float32_t L(float32_t u, float32_t v, float32_t w, float32_t p, float32_t r)
+{return qbar(u,v,w)*S*b*Cl(u,v,w,p,r);}
+
+float32_t M(float32_t u, float32_t v, float32_t w, float32_t q)
+{return qbar(u,v,w)*S*c*Cm(u,w,q);}
+
+float32_t N(float32_t u, float32_t v, float32_t w, float32_t p, float32_t r)
+{return qbar(u,v,w)*S*b*Cn(u,v,w,p,r);}
+

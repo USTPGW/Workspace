@@ -1,0 +1,894 @@
+/* Working code for peripheral communication required for PGW test bed
+Created by Dan Kassen with the help on online examples
+List of important pinouts:
+
+USART2:
+PA2 = TX
+
+SPI:
+PA5 = SCK
+PA6 = MISO
+PA7 = MOSI
+PE7 = CS
+
+ADC:
+PC2 = Analog In
+
+PWM Out:
+PC6 = PWM Out 1
+PC7 = PWM Out 2
+PC8 = PWM Out 3
+
+PWM In:
+PB7 = PWM In 1
+PB6 = PWM In 2
+
+Debugging:
+PD12-PD15 = LEDs
+
+GPS:
+3.3V -> Red Wire
+GND -> Black Wire
+TX (PA2) -> Green Wire
+RX (PA3) -> Yellow Wire
+*/
+
+#include <stm32f4xx.h>
+#include <misc.h>			
+#include <stm32f4xx_usart.h>
+#include <stm32f4xx_spi.h>
+#include <stm32f4xx_tim.h>
+#include <stm32f4xx_flash.h>
+
+#define MAX_STRLEN 12 // this is the maximum string length of our string in characters
+volatile char received_string[MAX_STRLEN+1]; // this will hold the recieved string
+
+#define ADC3_DR_ADDRESS     ((uint32_t)0x4001224C)
+
+#define Test_Address					0x20010000
+
+__IO uint16_t ADC3ConvertedValue = 0;
+__IO uint32_t ADC3ConvertedVoltage = 0;
+
+TIM_TimeBaseInitTypeDef  TIM_TimeBaseStructure;
+TIM_ICInitTypeDef  TIM_ICInitStructure;
+TIM_OCInitTypeDef  TIM_OCInitStructure;
+uint16_t CCR1_Val = 333;
+uint16_t CCR2_Val = 249;
+uint16_t CCR3_Val = 166;
+uint16_t CCR4_Val = 83;
+uint16_t CCR_Test = 30;
+uint16_t PrescalerValue = 0;
+
+// variables for cube
+int xaccel;
+int yaccel;
+int zaccel;
+int xgyro;
+int ygyro;
+int zgyro;
+int xmagn;
+int ymagn;
+int zmagn;
+int temper;
+int garbage;
+int cubecount;
+
+//other variables
+long int n;
+long int temp;
+int a;
+int z;
+int i=0;
+int j=0;
+int k=0;
+char c;
+char d[5] = {0,0,0,0,0};
+char e[];
+float v;
+float vtemp;
+long int vint;
+int receivedvalue=0;
+int ignore;
+uint16_t output=555;
+float test=1.25;
+int dutycycle;
+int dutycycle1;
+int frequency;
+int frequency1;
+int pwm;
+int pwm1;
+int pitch;
+int roll;
+
+void printvalue(uint16_t display);
+void ADC3_CH12_DMA_Config(void);
+void init_GPIO(void);
+void init_USART1(uint32_t baudrate);
+void init_USART2(uint32_t baudrate);
+void init_SPI1(void);
+uint16_t get_spidata(uint16_t data);
+uint16_t SPI1_receive(void);
+void TIM_Config(void);
+void PWM_Out(uint16_t pulse, uint16_t roll);
+void PWM_In(uint16_t Channel);
+void twoscomphandler(uint16_t value);
+void temptwoscomphandler(uint16_t value);
+void cubedata(void);
+void printcubevalues(void);
+void TIM4_IRQHandler(void);
+void motorcontrol(void);
+
+void Delay(__IO uint32_t nCount) {
+   while(nCount--) {
+  }
+}
+
+/* This function is used to transmit a string of characters via 
+ * the USART specified in USARTx.
+ * 
+ * It takes two arguments: USARTx --> can be any of the USARTs e.g. USART1, USART2 etc.
+ * 						   (volatile) char *s is the string you want to send
+ * 
+ * Note: The string has to be passed to the function as a pointer because
+ * 		 the compiler doesn't know the 'string' data type. In standard
+ * 		 C a string is just an array of characters
+ * 
+ * Note 2: At the moment it takes a volatile char because the received_string variable
+ * 		   declared as volatile char --> otherwise the compiler will spit out warnings
+ * */
+void USART_puts(USART_TypeDef* USARTx, volatile char *s){
+
+	while(*s){
+		// wait until data register is empty
+		while( !(USARTx->SR & 0x00000040) ); 
+		USART_SendData(USARTx, *s);
+		*s++;
+	}
+}
+
+void USART_put(USART_TypeDef* USARTx, char s){
+		// wait until data register is empty
+		while( !(USARTx->SR & 0x00000040) ); 
+		USART_SendData(USARTx, s);
+}
+
+/* This funtion is used to transmit and receive data 
+ * with SPI1
+ * 			data --> data to be transmitted
+ * 			returns received value
+ */
+void SPI1_send(uint16_t data){
+
+	SPI1->DR = data; // write data to be transmitted to the SPI data register
+	while( !(SPI1->SR & SPI_I2S_FLAG_TXE) ); // wait until transmit complete
+	while( SPI1->SR & SPI_I2S_FLAG_BSY ); // wait until SPI is not busy anymore
+}
+
+uint16_t SPI1_receive(void){
+	
+	while( !(SPI1->SR & SPI_I2S_FLAG_RXNE) ); // wait until receive complete
+	while( SPI1->SR & SPI_I2S_FLAG_BSY ); // wait until SPI is not busy anymore
+	return SPI1->DR; // return received data from SPI data register
+}
+
+/*static void gpsPrint(const char *str)
+{
+    while (*str) {
+        uart2Write(*str);
+        if (cfg.gps_type == GPS_UBLOX)
+            Delay(4);
+        str++;
+    }
+    // wait to send all
+    while (!uart2TransmitEmpty());
+    Delay(30);
+}*/
+
+int main(void) {
+	j=1;
+	
+	init_GPIO(); // initializes gpio
+	
+	TIM_Config(); // initializes pwm timer
+	
+	PWM_Out(2100, 8); // outputs pwm on initialized pins
+	
+	/* ADC3 configuration *******************************************************/
+  /*  - Enable peripheral clocks                                              */
+  /*  - DMA2_Stream0 channel2 configuration                                   */
+  /*  - Configure ADC Channel12 pin as analog input                           */
+  /*  - Configure ADC3 Channel12                                              */
+   ADC3_CH12_DMA_Config();
+
+  /* Start ADC3 Software Conversion */ 
+  ADC_SoftwareStartConv(ADC3);
+	
+	ADC3ConvertedVoltage = ADC3ConvertedValue *3300/0xFFF;
+	
+	init_USART1(9600); // initialize USART1 @ 9600 baud
+  init_USART2(9600); // initialize USART2 @ 9600 baud
+
+//  USART_puts(USART1, "Init complete! Hello World!\r\n"); // just send a message to indicate that it works
+//	USART_puts(USART1, d); // send current voltage value
+//	USART_puts(USART1, " \r\n"); // just returns to next line
+	
+	init_SPI1(); // enables spi
+	
+	cubecount=0;
+	
+	/* // Ensures RF Transmitter is turned on before code runs.
+	
+	PWM_In(TIM_Channel_2);
+	Delay(10000000);
+	frequency = TIM_GetCapture2(TIM4);
+	Delay(10000000);
+	
+	while(frequency == 0)
+	{
+	PWM_In(TIM_Channel_2);
+	Delay(10000000);
+	frequency = TIM_GetCapture2(TIM4);
+	Delay(10000000);
+		
+		if(GPIOA->IDR & 0x0001){
+			j++;
+			PWM_Out(j, 8); // outputs pwm on initialized pins
+		}
+	} */
+
+  while (1){  
+		//j=0;
+    /* convert the ADC value (from 0 to 0xFFF) to a voltage value (from 0V to 3.3V)*/
+		//ADC3ConvertedVoltage = ADC3ConvertedValue *3300/0xFFF;
+		
+		 /*if(GPIOA->IDR & 0x0002){
+		 } // if A2 is high, but doesn't behave as I would expect */
+		
+		//motorcontrol();
+		
+		// PWM_Out(30,8);
+		 
+		cubedata();
+		
+		 /*if(GPIOA->IDR & 0x0001){
+			//PWM_In();
+			//CCR_Test++;
+			// output = (*(__IO uint32_t*) Test_Address); // sets output to value in Test_Address
+			// output = USART_ReceiveData(USART2);
+			printcubevalues();
+			USART_puts(USART2, " \r\n"); // just returns to next line
+			// printvalue(output); // prints output
+			//PWM_Out(CCR_Test); // outputs pwm on initialized pins
+			Delay(10000000L); // add a small delay to debounce the switch 
+		} */
+		Delay(100000); // timing delay for servos
+  }
+}
+
+//converts two's compliment numbers to +/- and prints them
+
+void twoscomphandler(uint16_t value){
+	if(value>0x1FFF)
+		{
+			USART_puts(USART1, "-");
+			value=((~value)&0x1FFF);
+			printvalue(value);
+		}
+		else
+		{
+			printvalue(value);
+		}
+	}
+	
+// a two's compliment handler for temp (as it is only 12 bits of data, not 14)
+	
+void temptwoscomphandler(uint16_t value){
+	if(value>0x7FF)
+		{
+			USART_puts(USART1, "-");
+			value=((~value)&0x7FF);
+			printvalue(value);
+		}
+		else
+		{
+			printvalue(value);
+		}
+	}
+
+// next function converts any value to a string to be printed via usart
+
+void printvalue(uint16_t display)
+{
+	d[0]=0;
+	d[1]=0;
+	d[2]=0;
+	d[3]=0;
+	d[4]=0;
+	n = display;
+	temp = n; // temporary storage 
+	z=1; // value to ensure 0 gets printed
+	
+	while(temp!=0){
+		temp=temp/10;
+		i++;
+	}
+	
+	while(i!=0){
+		a=n%10;
+		c=a | 0x30;
+		d[i-1] = a | 0x30;
+		n=n/10;
+		i--;
+		z=0;
+	}
+	if(z==0){
+	USART_puts(USART2, d); // send current voltage value
+	USART_puts(USART2, " \r\n"); // just returns to next line
+	}
+	else{
+	USART_puts(USART2, "0\r\n"); // send current voltage value
+	}
+	i=0;
+}
+
+uint16_t get_spidata(uint16_t data){
+	  GPIOE->BSRRH |= GPIO_Pin_7; // set PE7 (CS) low
+		SPI1_send(data); // transmit dummy byte and receive data
+	  receivedvalue = SPI1_receive(); // receive data
+		GPIOE->BSRRL |= GPIO_Pin_7; // set PE7 (CS) high
+		return receivedvalue;
+}
+
+void cubedata(void){
+			get_spidata(0x0A00); // read data
+			temper = (receivedvalue&0x3FFF);
+			Delay(40000);
+			
+			get_spidata(0x0C00); // read data
+			xaccel = (receivedvalue&0x3FFF);
+			Delay(40000);
+			
+			get_spidata(0x0E00); // read data
+			yaccel = (receivedvalue&0x3FFF);
+			Delay(40000);
+			
+			get_spidata(0x0400); // read data
+			zaccel = (receivedvalue&0x3FFF);
+			Delay(40000);
+			
+			get_spidata(0x0600); // read data
+			xgyro = (receivedvalue&0x3FFF);
+			Delay(40000);
+			
+			get_spidata(0x0800); // read data
+			ygyro = (receivedvalue&0x3FFF);
+			Delay(40000);
+			
+			get_spidata(0x1000); // read data
+			zgyro = (receivedvalue&0x3FFF);
+			Delay(40000);
+			
+			get_spidata(0x1200); // read data
+			xmagn = (receivedvalue&0x3FFF);
+			Delay(40000);
+			
+			get_spidata(0x1400); // read data
+			ymagn = (receivedvalue&0x3FFF);
+			Delay(40000);
+			
+			get_spidata(0x1600); // read data
+			zmagn = (receivedvalue&0x3FFF);
+			Delay(40000);
+	
+}
+
+void printcubevalues(void){
+	/*USART_puts(USART2, "Garbage:\r\n");
+	twoscomphandler(garbage);*/
+	USART_puts(USART2, "XAccel:\r\n");
+	twoscomphandler(xaccel);
+	USART_puts(USART2, "YAccel:\r\n");
+	twoscomphandler(yaccel);
+	USART_puts(USART2, "ZAccel:\r\n");
+	twoscomphandler(zaccel);
+	USART_puts(USART2, "XGyro:\r\n");
+	twoscomphandler(xgyro);
+	USART_puts(USART2, "YGyro:\r\n");
+	twoscomphandler(ygyro);
+	USART_puts(USART2, "ZGyro:\r\n");
+	twoscomphandler(zgyro);
+	USART_puts(USART2, "XMagn:\r\n");
+	twoscomphandler(xmagn);
+	USART_puts(USART2, "YMagn:\r\n");
+	twoscomphandler(ymagn);
+	USART_puts(USART2, "ZMagn:\r\n");
+	twoscomphandler(zmagn);
+	USART_puts(USART2, "Temperature:\r\n");
+	temptwoscomphandler(temper);
+}
+
+void motorcontrol(void)
+{
+	PWM_In(TIM_Channel_2);
+		dutycycle1 = TIM_GetCapture1(TIM4);
+		Delay(1000000); // timing delay for servos
+		pwm1 = ((dutycycle1*10000)/(frequency));
+		
+		PWM_In(TIM_Channel_1);
+		dutycycle = TIM_GetCapture1(TIM4);
+		Delay(1000000); // timing delay for servos
+		pwm = ((dutycycle*10000)/(frequency));
+		
+		pitch = pwm *2;
+		roll = pwm1;
+		
+		PWM_Out(pitch, 8); // change 8 to roll once algorithm is figured out
+		
+		//printvalue(pitch); // prints output
+		//USART_puts(USART2, "a\r\n"); // just send a message to indicate that it works
+}
+
+void PWM_Out(uint16_t pulse, uint16_t roll){
+	if(pulse>2100){
+		pulse=2100;}
+		
+	if(pulse<900){
+		pulse=900;}
+		
+	/* Compute the prescaler value */
+	/* ((SystemCoreClock /2) / 33333) == 50 Hz Signal*/
+  PrescalerValue = (uint16_t) ((SystemCoreClock /2) / 33333) - 1;
+
+  /* Time base configuration */
+  TIM_TimeBaseStructure.TIM_Period = 20000-1; // 665 original value
+  TIM_TimeBaseStructure.TIM_Prescaler = 72-1; // (PrescalerValue); original value
+  TIM_TimeBaseStructure.TIM_ClockDivision = 0;
+  TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
+
+  TIM_TimeBaseInit(TIM3, &TIM_TimeBaseStructure);
+	
+	/* PWM1 Mode configuration: Channel1 */
+  TIM_OCInitStructure.TIM_OCMode = TIM_OCMode_PWM1;
+  TIM_OCInitStructure.TIM_OutputState = TIM_OutputState_Enable;
+  TIM_OCInitStructure.TIM_Pulse = (pulse + roll - 8);
+  TIM_OCInitStructure.TIM_OCPolarity = TIM_OCPolarity_High;
+
+  TIM_OC1Init(TIM3, &TIM_OCInitStructure);
+	TIM_OC1PreloadConfig(TIM3, TIM_OCPreload_Enable);
+	
+	/* PWM1 Mode configuration: Channel 2*/
+	TIM_OCInitStructure.TIM_OCMode = TIM_OCMode_PWM1;
+  TIM_OCInitStructure.TIM_OutputState = TIM_OutputState_Enable;
+  TIM_OCInitStructure.TIM_Pulse = (pulse - roll - 8);
+  TIM_OCInitStructure.TIM_OCPolarity = TIM_OCPolarity_High;
+	
+	TIM_OC2Init(TIM3, &TIM_OCInitStructure);
+	TIM_OC2PreloadConfig(TIM3, TIM_OCPreload_Enable);
+	
+  /*PWM1 Mode configuration: Channel2 */
+  /*TIM_OCInitStructure.TIM_OutputState = TIM_OutputState_Enable;
+  TIM_OCInitStructure.TIM_Pulse = pulse;
+
+  TIM_OC2Init(TIM3, &TIM_OCInitStructure);
+
+  TIM_OC2PreloadConfig(TIM3, TIM_OCPreload_Enable);*/
+	
+	/* TIM3 enable counter */
+  TIM_Cmd(TIM3, ENABLE);
+}
+
+void PWM_In(uint16_t Channel)
+{
+	/* Compute the prescaler value */
+  PrescalerValue = (uint16_t) ((SystemCoreClock / 2) / 500000) - 1;
+
+  /* Time base configuration */
+  TIM_TimeBaseStructure.TIM_Period = 65535;
+  TIM_TimeBaseStructure.TIM_Prescaler = 128;
+  TIM_TimeBaseStructure.TIM_ClockDivision = 0;
+  TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
+	
+	TIM_TimeBaseInit(TIM4, &TIM_TimeBaseStructure);
+	
+	/* TIM4 configuration: PWM Input mode ------------------------
+     The external signal is connected to TIM4 CH3 pin (PB.08), 
+     The Rising edge is used as active edge,
+     The TIM4 CCR2 is used to compute the frequency value 
+     The TIM4 CCR1 is used to compute the duty cycle value
+  ------------------------------------------------------------ */
+
+  TIM_ICInitStructure.TIM_Channel = Channel;
+  TIM_ICInitStructure.TIM_ICPolarity = TIM_ICPolarity_Rising;
+  TIM_ICInitStructure.TIM_ICSelection = TIM_ICSelection_DirectTI;
+  TIM_ICInitStructure.TIM_ICPrescaler = TIM_ICPSC_DIV1;
+  TIM_ICInitStructure.TIM_ICFilter = 0x0;
+
+  TIM_PWMIConfig(TIM4, &TIM_ICInitStructure);
+
+  /* Select the TIM4 Input Trigger: TI2FP2 */
+  TIM_SelectInputTrigger(TIM4, TIM_TS_TI2FP2);
+
+  /* Select the slave Mode: Reset Mode */
+  TIM_SelectSlaveMode(TIM4, TIM_SlaveMode_Reset);
+  TIM_SelectMasterSlaveMode(TIM4,TIM_MasterSlaveMode_Enable);
+
+  /* TIM enable counter */
+  TIM_Cmd(TIM4, ENABLE);
+
+  /* Enable the CC2 Interrupt Request */
+  // TIM_ITConfig(TIM4, TIM_IT_CC2, ENABLE); // causes bad things
+}
+
+/**
+  * @brief  ADC3 channel12 with DMA configuration
+  * @param  None
+  * @retval None
+  */
+void ADC3_CH12_DMA_Config(void)
+{
+  ADC_InitTypeDef       ADC_InitStructure;
+  ADC_CommonInitTypeDef ADC_CommonInitStructure;
+  DMA_InitTypeDef       DMA_InitStructure;
+  GPIO_InitTypeDef      GPIO_InitStructure;
+
+  /* Enable ADC3, DMA2 and GPIO clocks ****************************************/
+  RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_DMA2 | RCC_AHB1Periph_GPIOC, ENABLE);
+  RCC_APB2PeriphClockCmd(RCC_APB2Periph_ADC3, ENABLE);
+
+  /* DMA2 Stream0 channel0 configuration **************************************/
+  DMA_InitStructure.DMA_Channel = DMA_Channel_2;  
+  DMA_InitStructure.DMA_PeripheralBaseAddr = (uint32_t)ADC3_DR_ADDRESS;
+  DMA_InitStructure.DMA_Memory0BaseAddr = (uint32_t)&ADC3ConvertedValue;
+  DMA_InitStructure.DMA_DIR = DMA_DIR_PeripheralToMemory;
+  DMA_InitStructure.DMA_BufferSize = 1;
+  DMA_InitStructure.DMA_PeripheralInc = DMA_PeripheralInc_Disable;
+  DMA_InitStructure.DMA_MemoryInc = DMA_MemoryInc_Disable;
+  DMA_InitStructure.DMA_PeripheralDataSize = DMA_PeripheralDataSize_HalfWord;
+  DMA_InitStructure.DMA_MemoryDataSize = DMA_MemoryDataSize_HalfWord;
+  DMA_InitStructure.DMA_Mode = DMA_Mode_Circular;
+  DMA_InitStructure.DMA_Priority = DMA_Priority_High;
+  DMA_InitStructure.DMA_FIFOMode = DMA_FIFOMode_Disable;         
+  DMA_InitStructure.DMA_FIFOThreshold = DMA_FIFOThreshold_HalfFull;
+  DMA_InitStructure.DMA_MemoryBurst = DMA_MemoryBurst_Single;
+  DMA_InitStructure.DMA_PeripheralBurst = DMA_PeripheralBurst_Single;
+  DMA_Init(DMA2_Stream0, &DMA_InitStructure);
+  DMA_Cmd(DMA2_Stream0, ENABLE);
+
+  /* Configure ADC3 Channel12 pin as analog input ******************************/
+  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_2;
+  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AN;
+  GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_NOPULL ;
+  GPIO_Init(GPIOC, &GPIO_InitStructure);
+
+  /* ADC Common Init **********************************************************/
+  ADC_CommonInitStructure.ADC_Mode = ADC_Mode_Independent;
+  ADC_CommonInitStructure.ADC_Prescaler = ADC_Prescaler_Div2;
+  ADC_CommonInitStructure.ADC_DMAAccessMode = ADC_DMAAccessMode_Disabled;
+  ADC_CommonInitStructure.ADC_TwoSamplingDelay = ADC_TwoSamplingDelay_5Cycles;
+  ADC_CommonInit(&ADC_CommonInitStructure);
+
+  /* ADC3 Init ****************************************************************/
+  ADC_InitStructure.ADC_Resolution = ADC_Resolution_12b;
+  ADC_InitStructure.ADC_ScanConvMode = DISABLE;
+  ADC_InitStructure.ADC_ContinuousConvMode = ENABLE;
+  ADC_InitStructure.ADC_ExternalTrigConvEdge = ADC_ExternalTrigConvEdge_None;
+  ADC_InitStructure.ADC_DataAlign = ADC_DataAlign_Right;
+  ADC_InitStructure.ADC_NbrOfConversion = 1;
+  ADC_Init(ADC3, &ADC_InitStructure);
+
+  /* ADC3 regular channel12 configuration *************************************/
+  ADC_RegularChannelConfig(ADC3, ADC_Channel_12, 1, ADC_SampleTime_3Cycles);
+
+ /* Enable DMA request after last transfer (Single-ADC mode) */
+  ADC_DMARequestAfterLastTransferCmd(ADC3, ENABLE);
+
+  /* Enable ADC3 DMA */
+  ADC_DMACmd(ADC3, ENABLE);
+
+  /* Enable ADC3 */
+  ADC_Cmd(ADC3, ENABLE);
+}
+
+/* This funcion initializes the USART1 peripheral
+ * 
+ * Arguments: baudrate --> the baudrate at which the USART is 
+ * 						   supposed to operate
+ */
+void init_USART1(uint32_t baudrate){
+	
+	GPIO_InitTypeDef GPIO_InitStruct; // this is for the GPIO pins used as TX and RX
+	USART_InitTypeDef USART_InitStruct; // this is for the USART1 initilization
+	NVIC_InitTypeDef NVIC_InitStructure; // this is used to configure the NVIC (nested vector interrupt controller)
+
+	/* enable APB2 peripheral clock for USART1 
+	 * note that only USART1 and USART6 are connected to APB2
+	 * the other USARTs are connected to APB1
+	 */
+	RCC_APB2PeriphClockCmd(RCC_APB2Periph_USART1, ENABLE);
+
+	/* enable the peripheral clock for the pins used by 
+	 * USART1, PB6 for TX and PB7 for RX
+	 */
+	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
+
+	/* This sequence sets up the TX and RX pins 
+	 * so they work correctly with the USART1 peripheral
+	 */
+	GPIO_InitStruct.GPIO_Pin = GPIO_Pin_9 | GPIO_Pin_10; // Pins 9 (TX) and 10 (RX) are used
+	GPIO_InitStruct.GPIO_Mode = GPIO_Mode_AF; 			// the pins are configured as alternate function so the USART peripheral has access to them
+	GPIO_InitStruct.GPIO_Speed = GPIO_Speed_2MHz;		// this defines the IO speed and has nothing to do with the baudrate!
+	GPIO_InitStruct.GPIO_OType = GPIO_OType_PP;			// this defines the output type as push pull mode (as opposed to open drain)
+	GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_UP;			// this activates the pullup resistors on the IO pins
+	GPIO_Init(GPIOA, &GPIO_InitStruct);					// now all the values are passed to the GPIO_Init() function which sets the GPIO registers
+
+	/* The RX and TX pins are now connected to their AF
+	 * so that the USART1 can take over control of the 
+	 * pins
+	 */
+	GPIO_PinAFConfig(GPIOA, GPIO_PinSource9, GPIO_AF_USART1); //
+	GPIO_PinAFConfig(GPIOA, GPIO_PinSource10, GPIO_AF_USART1);
+
+	/* Now the USART_InitStruct is used to define the 
+	 * properties of USART1 
+	 */
+	USART_InitStruct.USART_BaudRate = baudrate;				// the baudrate is set to the value we passed into this init function
+	USART_InitStruct.USART_WordLength = USART_WordLength_8b;// we want the data frame size to be 8 bits (standard)
+	USART_InitStruct.USART_StopBits = USART_StopBits_1;		// we want 1 stop bit (standard)
+	USART_InitStruct.USART_Parity = USART_Parity_No;		// we don't want a parity bit (standard)
+	USART_InitStruct.USART_HardwareFlowControl = USART_HardwareFlowControl_None; // we don't want flow control (standard)
+	USART_InitStruct.USART_Mode = USART_Mode_Tx | USART_Mode_Rx; // we want to enable the transmitter and the receiver
+	USART_Init(USART1, &USART_InitStruct);					// again all the properties are passed to the USART_Init function which takes care of all the bit setting
+
+
+	/* Here the USART1 receive interrupt is enabled
+	 * and the interrupt controller is configured 
+	 * to jump to the USART1_IRQHandler() function
+	 * if the USART1 receive interrupt occurs
+	 */
+	USART_ITConfig(USART1, USART_IT_RXNE, ENABLE); // enable the USART1 receive interrupt 
+
+	NVIC_InitStructure.NVIC_IRQChannel = USART1_IRQn;		 // we want to configure the USART1 interrupts
+	NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;// this sets the priority group of the USART1 interrupts
+	NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0;		 // this sets the subpriority inside the group
+	NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;			 // the USART1 interrupts are globally enabled
+	NVIC_Init(&NVIC_InitStructure);							 // the properties are passed to the NVIC_Init function which takes care of the low level stuff	
+
+	// finally this enables the complete USART1 peripheral
+	USART_Cmd(USART1, ENABLE);
+}
+
+void init_USART2(uint32_t baudrate){
+
+	GPIO_InitTypeDef GPIO_InitStructure;
+	USART_InitTypeDef USART_InitStructure;
+
+	/* enable peripheral clock for USART2 */
+	RCC_APB1PeriphClockCmd(RCC_APB1Periph_USART2, ENABLE);
+
+
+	/* GPIOA clock enable */
+	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
+
+	/* GPIOA Configuration:  USART2 TX on PA2 */
+	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_2;
+	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF;
+	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+	GPIO_InitStructure.GPIO_OType = GPIO_OType_PP;
+	GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_UP ;
+	GPIO_Init(GPIOA, &GPIO_InitStructure);
+
+	/* Connect USART2 pins to AF2 */
+	// TX = PA2
+	GPIO_PinAFConfig(GPIOA, GPIO_PinSource2, GPIO_AF_USART2);
+
+	USART_InitStructure.USART_BaudRate = baudrate;
+	USART_InitStructure.USART_WordLength = USART_WordLength_8b;
+	USART_InitStructure.USART_StopBits = USART_StopBits_1;
+	USART_InitStructure.USART_Parity = USART_Parity_No;
+	USART_InitStructure.USART_HardwareFlowControl = USART_HardwareFlowControl_None;
+	USART_InitStructure.USART_Mode = USART_Mode_Tx | USART_Mode_Rx;
+	USART_Init(USART2, &USART_InitStructure);
+
+	USART_Cmd(USART2, ENABLE); // enable USART2
+
+}
+
+void init_GPIO(void){
+
+	/* This TypeDef is a structure defined in the
+	 * ST's library and it contains all the properties
+	 * the corresponding peripheral has, such as output mode,
+	 * pullup / pulldown resistors etc.
+	 *
+	 * These structures are defined for every peripheral so
+	 * every peripheral has it's own TypeDef. The good news is
+	 * they always work the same so once you've got a hang
+	 * of it you can initialize any peripheral.
+	 *
+	 * The properties of the periperals can be found in the corresponding
+	 * header file e.g. stm32f4xx_gpio.h and the source file stm32f4xx_gpio.c
+	 */
+	GPIO_InitTypeDef GPIO_InitStruct;
+
+	/* This enables the peripheral clock to the GPIOD IO module
+	 * Every peripheral's clock has to be enabled
+	 *
+	 * The STM32F4 Discovery's User Manual and the STM32F407VGT6's
+	 * datasheet contain the information which peripheral clock has to be used.
+	 *
+	 * It is also mentioned at the beginning of the peripheral library's
+	 * source file, e.g. stm32f4xx_gpio.c
+	 */
+	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOD, ENABLE);
+
+	/* In this block of instructions all the properties
+	 * of the peripheral, the GPIO port in this case,
+	 * are filled with actual information and then
+	 * given to the Init function which takes care of
+	 * the low level stuff (setting the correct bits in the
+	 * peripheral's control register)
+	 *
+	 *
+	 * The LEDs on the STM324F Discovery are connected to the
+	 * pins PD12 thru PD15
+	 */
+	GPIO_InitStruct.GPIO_Pin = GPIO_Pin_15 | GPIO_Pin_14 | GPIO_Pin_13 | GPIO_Pin_12; // we want to configure all LED GPIO pins
+	GPIO_InitStruct.GPIO_Mode = GPIO_Mode_OUT; 		// we want the pins to be an output
+	GPIO_InitStruct.GPIO_Speed = GPIO_Speed_2MHz; 	// this sets the GPIO modules clock speed
+	GPIO_InitStruct.GPIO_OType = GPIO_OType_PP; 	// this sets the pin type to push / pull (as opposed to open drain)
+	GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_NOPULL; 	// this sets the pullup / pulldown resistors to be inactive
+	GPIO_Init(GPIOD, &GPIO_InitStruct); 			// this finally passes all the values to the GPIO_Init function which takes care of setting the corresponding bits.
+
+	/* This enables the peripheral clock to
+	 * the GPIOA IO module
+	 */
+	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
+
+	/* Here the GPIOA module is initialized.
+	 * We want to use PA0 as an input because
+	 * the USER button on the board is connected
+	 * between this pin and VCC.
+	 */
+	GPIO_InitStruct.GPIO_Pin = GPIO_Pin_0 | GPIO_Pin_1;		  // we want to configure PA0
+	GPIO_InitStruct.GPIO_Mode = GPIO_Mode_IN; 	  // we want it to be an input
+	GPIO_InitStruct.GPIO_Speed = GPIO_Speed_2MHz; //this sets the GPIO modules clock speed
+	GPIO_InitStruct.GPIO_OType = GPIO_OType_PP;   // this sets the pin type to push / pull (as opposed to open drain)
+	GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_DOWN;   // this enables the pulldown resistor --> we want to detect a high level
+	GPIO_Init(GPIOA, &GPIO_InitStruct);			  // this passes the configuration to the Init function which takes care of the low level stuff
+}
+
+void init_SPI1(void){
+
+	GPIO_InitTypeDef GPIO_InitStruct;
+	SPI_InitTypeDef SPI_InitStruct;
+
+	// enable clock for used IO pins
+	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
+
+	/* configure pins used by SPI1
+	 * PA5 = SCK
+	 * PA6 = MISO
+	 * PA7 = MOSI
+	 */
+	GPIO_InitStruct.GPIO_Pin = GPIO_Pin_7 | GPIO_Pin_6 | GPIO_Pin_5;
+	GPIO_InitStruct.GPIO_Mode = GPIO_Mode_AF;
+	GPIO_InitStruct.GPIO_OType = GPIO_OType_PP;
+	GPIO_InitStruct.GPIO_Speed = GPIO_Speed_2MHz;
+	GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_NOPULL;
+	GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+	// connect SPI1 pins to SPI alternate function
+	GPIO_PinAFConfig(GPIOA, GPIO_PinSource5, GPIO_AF_SPI1);
+	GPIO_PinAFConfig(GPIOA, GPIO_PinSource6, GPIO_AF_SPI1);
+	GPIO_PinAFConfig(GPIOA, GPIO_PinSource7, GPIO_AF_SPI1);
+
+	// enable clock for used IO pins
+	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOE, ENABLE);
+
+	/* Configure the chip select pin
+	   in this case we will use PE7 */
+	GPIO_InitStruct.GPIO_Pin = GPIO_Pin_7;
+	GPIO_InitStruct.GPIO_Mode = GPIO_Mode_OUT;
+	GPIO_InitStruct.GPIO_OType = GPIO_OType_PP;
+	GPIO_InitStruct.GPIO_Speed = GPIO_Speed_2MHz;
+	GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_UP;
+	GPIO_Init(GPIOE, &GPIO_InitStruct);
+
+	GPIOE->BSRRL |= GPIO_Pin_7; // set PE7 high
+
+	// enable peripheral clock
+	RCC_APB2PeriphClockCmd(RCC_APB2Periph_SPI1, ENABLE);
+
+	/* configure SPI1 in Mode 0 
+	 * CPOL = 0 --> clock is low when idle
+	 * CPHA = 0 --> data is sampled at the first edge
+	 */
+	SPI_InitStruct.SPI_Direction = SPI_Direction_2Lines_FullDuplex; // set to full duplex mode, seperate MOSI and MISO lines
+	SPI_InitStruct.SPI_Mode = SPI_Mode_Master;     // transmit in master mode, NSS pin has to be always high
+	SPI_InitStruct.SPI_DataSize = SPI_DataSize_16b; // one packet of data is 16 bits wide
+	SPI_InitStruct.SPI_CPOL = SPI_CPOL_High;        // clock is high when idle
+	SPI_InitStruct.SPI_CPHA = SPI_CPHA_2Edge;      // data sampled at second edge
+	SPI_InitStruct.SPI_NSS = SPI_NSS_Soft | SPI_NSSInternalSoft_Set; // set the NSS management to internal and pull internal NSS high
+	SPI_InitStruct.SPI_BaudRatePrescaler = SPI_BaudRatePrescaler_64; // SPI frequency is APB2 frequency / 64
+	SPI_InitStruct.SPI_FirstBit = SPI_FirstBit_MSB;// data is transmitted MSB first
+	SPI_Init(SPI1, &SPI_InitStruct); 
+	
+	// RCC_PCLK2Config(RCC_HCLK_Div16); // slows down clock speed
+
+	SPI_Cmd(SPI1, ENABLE); // enable SPI1
+}
+
+void TIM_Config(void)
+{
+  GPIO_InitTypeDef GPIO_InitStructure;
+  NVIC_InitTypeDef NVIC_InitStructure;
+	
+	/* TIM3 clock enable */
+  RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM3, ENABLE);
+
+  /* TIM4 clock enable */
+  RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM4, ENABLE);
+
+  /* GPIOB clock enable */
+  RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOB, ENABLE);
+	
+	/* GPIOC clock enable */
+  RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOC, ENABLE);
+  
+  /* TIM4 chennel2 configuration : PB.06 */
+  GPIO_InitStructure.GPIO_Pin   = GPIO_Pin_6 | GPIO_Pin_7;
+  GPIO_InitStructure.GPIO_Mode  = GPIO_Mode_AF;
+  GPIO_InitStructure.GPIO_Speed = GPIO_Speed_100MHz;
+  GPIO_InitStructure.GPIO_OType = GPIO_OType_PP;
+  GPIO_InitStructure.GPIO_PuPd  = GPIO_PuPd_UP ;
+  GPIO_Init(GPIOB, &GPIO_InitStructure);
+	
+		/* GPIOC Configuration: TIM3 CH1 (PC6) and TIM3 CH2 (PC7) and TIM3 CH3 (PC8) */
+  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_6 | GPIO_Pin_7 | GPIO_Pin_8;
+  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF;
+  GPIO_InitStructure.GPIO_Speed = GPIO_Speed_100MHz;
+  GPIO_InitStructure.GPIO_OType = GPIO_OType_PP;
+  GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_UP ;
+  GPIO_Init(GPIOC, &GPIO_InitStructure); 
+  
+  /* Connect TIM4 pin2 to AF2 */
+  GPIO_PinAFConfig(GPIOB, GPIO_PinSource6, GPIO_AF_TIM4);
+	GPIO_PinAFConfig(GPIOB, GPIO_PinSource7, GPIO_AF_TIM4);
+	
+	/* Connect TIM3 pins to AF2 */  
+  GPIO_PinAFConfig(GPIOC, GPIO_PinSource6, GPIO_AF_TIM3);
+  GPIO_PinAFConfig(GPIOC, GPIO_PinSource7, GPIO_AF_TIM3); 
+	GPIO_PinAFConfig(GPIOC, GPIO_PinSource8, GPIO_AF_TIM3);
+
+  /* Enable the TIM4 global Interrupt */
+  NVIC_InitStructure.NVIC_IRQChannel = TIM4_IRQn;
+  NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
+  NVIC_InitStructure.NVIC_IRQChannelSubPriority = 1;
+  NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
+  NVIC_Init(&NVIC_InitStructure);
+
+}
+
+// this is the interrupt request handler (IRQ) for ALL USART1 interrupts
+void USART1_IRQHandler(void){
+
+	// check if the USART1 receive interrupt flag was set
+	if( USART_GetITStatus(USART1, USART_IT_RXNE) ){
+
+		static uint8_t cnt = 0; // this counter is used to determine the string length
+		char t = USART1->DR; // the character from the USART1 data register is saved in t
+
+		/* check if the received character is not the LF character (used to determine end of string) 
+		 * or the if the maximum string length has been been reached 
+		 */
+		if( (t != '\n') && (cnt < MAX_STRLEN) ){ 
+			received_string[cnt] = t;
+			cnt++;
+		}
+		else{ // otherwise reset the character counter and print the received string
+			cnt = 0;
+			USART_puts(USART1, received_string);
+		}
+	}
+}

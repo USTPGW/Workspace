@@ -1,0 +1,75 @@
+// Unscented Kalman Filter File
+// Created by Dan Kassen
+// Hand-Converted to C from Matlab file written by previous senior design team
+
+#include <stm32f4xx.h>
+#include <misc.h>			
+#include <stm32f4xx_usart.h>
+#include <stm32f4xx_spi.h>
+#include <stm32f4xx_tim.h>
+#include <stm32f4xx_flash.h>
+#include "arm_math.h" 
+#include "math_helper.h" 
+
+void mult(double *mat1, double *mat2, int row1, int col1, int row2, int col2, double *matout);
+
+ int main(void)
+{
+	int row1 = 3;
+	int col1 = 3;
+	int row2 = 3;
+	int col2 = 3;
+  double first[12] = {1, 2, 3, 2, 1, 2, 3, 2, 1, 2, 2, 2};
+	double second[12] = {3, 2, 1, 2, 3, 2, 1, 2, 3, 2, 2, 2};
+	double multiply[12] = {0};
+ 
+	mult(first,second,3,4,4,3,multiply); 
+	
+	while(1)
+	{};
+		
+ 
+  return 0;
+}
+
+void mult(double *mat1, double *mat2, int row1, int col1, int row2, int col2, double *matout)
+{
+	int c = 0;
+	int d = 0; 
+	int k = 0;
+	int sum = 0;
+	
+	double first[4][3] = {0};
+	double second[3][4] = {0};
+
+	for(c=0;c<4;c++)
+	{
+		for(d=0;d<3;d++)
+		{
+			first[c][d] = mat1[c*3+d];
+		}
+	}
+	
+	for(c=0;c<3;c++)
+	{
+		for(d=0;d<4;d++)
+		{
+			second[c][d] = mat1[c*4+d];
+		}
+	}
+	
+	for(c=0;c<row1;c++)
+	{
+		for(d=0;d<col2;d++)
+		{
+			for(k=0;k<row2;k++)
+			{
+				sum = sum + mat1[c*row1+k]*mat2[k*row2+d];
+			}
+			
+			matout[c*row1+d]=sum;
+			sum=0;
+		}
+	}   
+}
+	

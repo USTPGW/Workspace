@@ -1,0 +1,371 @@
+// Unscented Kalman Filter File
+// Created by Dan Kassen
+// Hand-Converted to C from Matlab file written by previous senior design team
+
+#include <stm32f4xx.h>
+#include <misc.h>			
+#include <stm32f4xx_usart.h>
+#include <stm32f4xx_spi.h>
+#include <stm32f4xx_tim.h>
+#include <stm32f4xx_flash.h>
+#include "arm_math.h" 
+#include "math_helper.h" 
+
+double V(double u, double v, double w);
+double alpha(double u, double w);
+double beta(double u, double v, double w);
+double qbar(double u, double v, double w);
+
+double Cx(double u, double w, double i);
+double Cy(double u, double v, double w, double p, double r);
+double Cz(double u, double w, double i);
+
+double Cl(double u, double v, double w, double p, double r);
+double Cm(double u, double w, double q);
+double Cn(double u, double v, double w, double p, double r);
+
+double L(double u, double v, double w, double p, double r);
+double M(double u, double v, double w, double q);
+double N(double u, double v, double w, double p, double r);
+
+double magZ(double phi, double theta, double psi);
+
+double f(double *x, double *out);
+double h(double x[]);
+void t(double x[], double output[]);
+
+double ukf(double fstate, double *x, double *P, double hmeas, double z, double *Q, double *R);
+double sigmas(double *x, double *P, double c, double *X);
+void ut1(double fstate, double *X, double *Wm, double *Wc, double uL, double *Q);
+
+//some basic matrix functions
+void *cholesky(double *A, int n, double *B); // double **aug, int mcol, double **chol, double **cholaug)
+
+void Delay(__IO uint32_t nCount) {
+   while(nCount--) {
+  }
+}
+
+double gravity = 9.81;
+double rho = 1026;
+double mass = 3.402;
+double buoyancy;
+double motor = 1;
+double S = .182775;
+double b = 1.32;
+double c = 0.08;
+double Ixx = .8742;
+double Iyy = .9032;
+double Izz = .355;
+double Ixz = .056;
+double dt = 0.01;	
+
+// Covariance Matrix
+double Q[576] = {
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0.000001, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0.000001, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0.000001, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0.000001, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0.000001, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0.000001, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+};
+
+// Sensor Covariances
+double R[100] = {
+	0.00125, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+	0, 0.00125, 0, 0, 0, 0, 0, 0, 0, 0, 
+	0, 0, 0.00125, 0, 0, 0, 0, 0, 0, 0, 
+	0, 0, 0, 0.009*9.81, 0, 0, 0, 0, 0, 0, 
+	0, 0, 0, 0, 0.009*9.81, 0, 0, 0, 0, 0, 
+	0, 0, 0, 0, 0, 0.009*9.81, 0, 0, 0, 0, 
+	0, 0, 0, 0, 0, 0, 0.0157, 0, 0, 0, 
+	0, 0, 0, 0, 0, 0, 0, 0.0157, 0, 0, 
+	0, 0, 0, 0, 0, 0, 0, 0, 0.0157, 0, 
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0.5, 
+};
+
+double i;
+double di;
+double h_cg;
+double cbuoy;
+double z;
+double netbuoyancy;
+
+// debugging declares
+
+double test[] = {
+	2, -1, 0, -1, 2, -1, 0, -1, 2
+};
+double output[9] = {0};
+double row;
+double col;
+
+
+int main(void) {
+	
+	netbuoyancy = mass*gravity + cbuoy;
+	
+	while(1){
+		cholesky(test, 3, output);
+		}
+}
+
+double V(double u, double v, double w)
+{return sqrt(u*u + v*v + w*w);}
+
+double alpha(double u, double w)
+{return w/u;}
+
+double beta(double u, double v, double w)
+{return v/V(u,v,w);}
+	
+double qbar(double u, double v, double w)
+{return (rho*V(u,v,w)*V(u,v,w))/2;}
+	
+double Cx(double u, double w, double i)
+{return 4.176*(alpha(u,w)+0.875*i)*alpha(u,w) - (0.010652+0.0393*(4.176*(alpha(u,w)+0.875*i))*(4.176*(alpha(u,w)+0.875*i)))*(1-(alpha(u,w)*alpha(u,w))/2);}
+
+double Cy(double u, double v, double w, double p, double r)
+{return 0.39569*beta(u,v,w) - 0.021877*p + 0.46644*r;}
+
+double Cz(double u, double w, double i)
+{return -4.176*(alpha(u,w)+0.875*i)*(1-(alpha(u,w)*alpha(u,w))) - (0.010652+0.0393*(4.176*(alpha(u,w)+0.875*i)*(4.176*(alpha(u,w)+0.875*i)))*alpha(u,w));}
+
+double Cl(double u, double v, double w, double p, double r)
+{return -0.52494*p + 0.00014753*beta(u,w,v) + 0.0013735*r + 64.7*(-di);}
+	
+double Cm(double u, double w, double q)
+{return (-2.21 + 3.06*i + 4*(h_cg-0.25))*(alpha(u,w)+0.875*i) + 0.9*i - 18.305*q;}
+	
+double Cn(double u, double v, double w, double p, double r)
+{return -.22218*beta(u,v,w) + 0.012151*p - 0.26078*r;}
+	
+double L(double u, double v, double w, double p, double r)
+{return qbar(u,v,w)*S*b*Cl(u,v,w,p,r);}
+
+double M(double u, double v, double w, double q)
+{return qbar(u,v,w)*S*c*Cm(u,w,q);}
+
+double N(double u, double v, double w, double p, double r)
+{return qbar(u,v,w)*S*b*Cn(u,v,w,p,r);}
+
+double magZ(double phi, double theta, double psi)
+{
+	double a;
+	double mb;
+	a = .31*theta*(1-(phi*phi)/2)*(1-(psi*psi)/2);
+	mb = .31*phi*psi;
+	if((a+mb)>=0)
+		{return sqrt(a*a+mb*mb);}
+	else
+		{return -sqrt(a*a+mb*mb);}
+}
+
+double f(double *x, double *out) // state transition equation, updated to reflect 0 indexing, may need to update method of outputing
+{
+	//double f[24] = {0};
+/*u-dot*/			out[0] = x[0] + dt*((qbar(x[0],x[1],x[2])*S*Cx(x[0],x[2],i)+motor)/mass - gravity*x[4] + (netbuoyancy/mass)*x[4]+x[8]*x[1] - x[7]*x[2]);
+/*v-dot*/			out[1] = x[1] + dt*(qbar(x[0],x[1],x[2])*S*Cy(x[0],x[1],x[2],x[6],x[8])/mass + gravity*x[3]*(1-(x[4]*x[4])/2) - (netbuoyancy/mass)*x[3]*(1-(x[4]*x[4])/2) - x[8]*x[0] - x[2]*x[6]);
+/*w-dot*/			out[2] = x[2] + dt*(qbar(x[0],x[1],x[2])*S*Cz(x[0],x[1],i)/mass + gravity*(1-(x[2]*x[2])/2)*(1-(x[4]*x[4])/2) - (netbuoyancy/mass)*(1-(x[3]*x[3])/2)*(1-(x[4]*x[4])/2) - x[7]*x[0] - x[6]*x[1]);
+/*phi-dot*/		out[3] = x[3] + dt*(x[6] + (x[7]*x[3] + x[8]*(1-(x[3]*x[3])/2))*x[4]);
+/*theta-dot*/	out[4] = x[4] + dt*(x[7]*(1-(x[3]*x[3])/2) + x[8]*x[3]);
+/*psi-dot*/		out[5] = x[5] + dt*(x[7]*x[3] + x[8]*(1-(x[3]*x[3])/2)*(1/(1-(x[4]*x[4])/2)));
+/*p-dot*/			out[6] = x[6] + dt*((Ixx*L(x[0],x[1],x[2],x[6],x[8]) + Ixz*N(x[0],x[1],x[2],x[6],x[8]) - (Ixz*(Iyy-Ixx-Izz)*x[6] + (Ixx*Ixx + Izz*(Izz-Iyy))*x[8])*x[7])/(Ixx*Izz  -Ixz*Ixz));
+/*q-dot*/			out[7] = x[7] + dt*((M(x[0],x[1],x[2],x[7]) - (Ixx - Izz)*x[6]*x[8] - Ixz*(x[6]*x[6]-x[8]*x[8]))/Iyy);
+/*r-dot*/			out[8] = x[8] + dt*((Ixz*L(x[0],x[1],x[2],x[6],x[8]) + Ixx*N(x[0],x[1],x[2],x[6],x[8]) - (Ixz*(Iyy-Ixx-Izz)*x[8] + (Ixz*Ixz + Ixx*(Ixx-Iyy))*x[6]*x[7]))/(Ixx*Izz - Ixz*Ixz));
+/*x-dot*/			out[9] = x[9] + dt*((1-(x[4]*x[4])/2)*(1-(x[5]*x[5])/2)*x[0] + (-(1-(x[3]*x[3])/2)*x[5] + x[3]*x[4]*(1-(x[5]*x[5])/2))*x[1] + (x[3]*x[5] + (1-(x[3]*x[3])/2)*x[4]*(1-(x[5]*x[5])/2))*x[2]+x[12]);
+/*y-dot*/			out[10] = x[10] + dt*((1-(x[4]*x[4])/2)*x[5]*x[0] + (-(1-(x[3]*x[3])/2)*(1-(x[5]*x[5])/2) + x[3]*x[4]*x[5])*x[1] + (x[3]*(1-(x[5]*x[5])/2) + (1-(x[3]*x[3])/2)*x[4]*x[5])*x[2] + x[13]);
+/*z-dot*/			out[11] = x[11] + dt*(-x[4]*x[0] + x[3]*(1-(x[4]*x[4])/2)*x[1] + (1-(x[3]*x[3])/2)*(1-(x[4]*x[4])/2)*x[2]);
+							out[12] = x[12]; out[13] = x[13]; out[14] = x[14]; out[15] = x[15]; out[16] = x[16]; out[17] = x[17]; // biases
+							out[18] = x[18]; out[19] = x[19]; out[20] = x[20]; out[21] = x[21]; out[22] = x[22]; out[23] = x[23]; // biases
+	//return f[24];
+}
+ 
+double h(double x[])
+{ // observation update equation
+	double f[10];
+	f[0] = .31*(1-(x[4]*x[4])/2)*(1-(x[5]*x[5])/2) + x[14]; // magnetometer x
+	f[1] = .31*(1-(x[3]*x[3])/2)*-x[5] + x[15]; // magnetometer y
+	f[2] = magZ(x[3],x[4],x[5]) + x[16]; // magnetometer z
+	f[3] = -gravity*x[4] + x[17]; // accelerometer x
+	f[4] = gravity*x[3]*(1-(x[4]*x[4])/2)+x[18]; // accelerometer y
+	f[5] = gravity*(1-(x[3]*x[3])/2)*(1-(x[4]*x[4])/2) + x[20]; // accelerometer z
+	f[6] = x[6] + x[20]; // gyro p
+	f[7] = x[7] + x[21]; // gyro q
+	f[8] = x[8] + x[22]; // gyro r
+	f[9] = x[11]*1.47 + 14.223 + x[23]; // pressure in PSI (depth)
+}	
+
+void t(double x[], double output[]) // test function to understand matrices in C
+{ 
+	output[0] = x[0]*2;
+	output[1] = x[1]*3;
+	output[2] = x[2]*4;
+}
+
+double ukf(double fstate, double *x, double *P, double hmeas, double z, double *Q, double *R)
+{
+	double uL = 24; // # of states
+	double m = 10; // # of measurements
+	double ualpha = .001; // default, tunable
+	double ki=0; // default, tunable
+	double ubeta=1; // default, tunable
+	double lambda = -24.00;
+	double uc = .000024;
+	double x1[1][24];
+	double X1[49][24];
+	
+	double Wc[49] = {(-24/.000024)-.000001, (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024),
+						(0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024),
+						(0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024),
+						(0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024),
+						(0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024),
+						(0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024),
+						(0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024)};
+		
+	double Wm[49] = {-24/.000024, (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024),
+						(0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024),
+						(0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024),
+						(0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024),
+						(0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024),
+						(0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024),
+						(0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024), (0.5/.000024)};
+		
+	double X[1176] = {0};
+	
+	lambda = ualpha*ualpha*(uL+ki)-uL;
+	uc = uL+lambda;
+	uc = sqrt(uc);
+	
+	sigmas(x,P,uc,X);	
+	
+	
+}
+
+void ut1(double fstate, double *X, double *Wm, double *Wc, double uL, double *Q)
+{
+	int countrow;
+	int countcol;
+	int count;
+	double utL = 49;
+	
+	double fout[24] = {0}; // 24 x 1
+	
+	double x1[24] = {0}; // 24 x 1
+	
+	double X1[1176] = {0}; // 24 x 49
+
+	double P1[576] = {0}; // 24 x 24
+
+	double X2[1176] = {0}; // 24 x 49
+
+	double diag[2401] = {0}; // 49 x 49
+
+	f(X,fout); // updated states for X1
+	
+	for(countrow=0;countrow<24;countrow++) // X1(:,l) = f(X(:,k)); 
+	{
+		for(countcol=0;countcol<49;countcol++)
+		{
+			X1[countrow*49 + countcol] = fout[countrow];
+			}
+	}
+	
+	for(count=0;count<24;count++) // x1 = x1+Wm(k)*Y(:,k); this aint right, with the multiply
+	{
+			x1[count] = x1[count] + Wm[count]*X1[countrow*49];
+	}
+	
+	for(countrow=0;countrow<24;countrow++) // X2 = X1-x1(:,ones(1,utL));
+	{
+		for(countcol=0;countcol<49;countcol++)
+		{
+			X2[countrow*49+countcol] = X1[countrow*49+countcol] - x1[countrow];
+		}
+	}
+	
+	for(count=0;count<49;count++)
+	{
+		diag[count*49 + count] = Wc[count]
+	}
+	
+	//P1 = X1*diag(Wc)*X2'+Q;
+	
+}
+
+double sigmas(double *x, double *P, double c, double *X)
+{
+	int count;
+	int countrow;
+	int countcol;
+	
+	double Y[576] = {0};
+	
+	double A[576] = {0};
+	
+	cholesky(P,24,A);
+	
+	for(count=0;count<576;count++)
+	{A[count] = c*A[count];} // now A = c*chol(P)'
+	
+	for(countrow=0;countrow<24;countrow++){
+		for(countcol=0;countcol<24;countcol++){
+			Y[countrow*24+countcol] = x[countrow];
+		}
+	}
+	
+	for(count=0;count<24;count++)
+	{X[count*49] = x[count];}
+	
+	for(countrow=0;countrow<24;countrow++){
+		for(countcol=1;countcol<25;countcol++){
+			X[countrow*49+countcol] = (Y[(countrow*24)+countcol-1] + A[(countrow*24)+countcol-1]);
+		}
+	}
+	
+	for(countrow=0;countrow<24;countrow++){
+		for(countcol=25;countcol<49;countcol++){
+			X[countrow*49+countcol] = (Y[(countrow*24)+countcol-25] + A[(countrow*24)+countcol-25]);
+		}
+	}
+}
+
+void *cholesky(double *A, int n, double *B)
+{
+	int i, j, k;
+  double *L = (double*)calloc(n * n, sizeof(double));
+ 
+    for (i = 0; i < n; i++){
+        for (j = 0; j < (i+1); j++) {
+            double s = 0;
+            for (k = 0; k < j; k++)
+                s += L[i * n + k] * L[j * n + k];
+            L[i * n + j] = (i == j) ?
+                           sqrt(A[i * n + i] - s) :
+                           (1.0 / L[j * n + j] * (A[i * n + j] - s));
+        }
+			}
+			
+			for (i = 0; i < n; i++) {
+        for (j = 0; j < n; j++)
+            B[i*n+j] = L[i * n + j];
+			}
+}

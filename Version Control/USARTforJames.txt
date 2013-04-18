@@ -1,0 +1,143 @@
+#include <stm32f4xx.h>
+#include <misc.h>
+#include <stm32f4xx_usart.h>
+
+#define MAX_STRLEN 12 // this is the maximum string length of our string in characters
+volatile char received_string[MAX_STRLEN+1]; // this will hold the recieved string
+
+long int n;
+long int temp;
+int a;
+int z;
+char c;
+char d[5] = {0,0,0,0,0};
+char e[];
+int i;
+
+void printvalue(uint16_t display);
+void init_USART2(uint32_t baudrate);
+
+void Delay(__IO uint32_t nCount) {
+   while(nCount--) {
+  }
+}
+
+void USART_puts(USART_TypeDef* USARTx, volatile char *s){
+
+	while(*s){
+		// wait until data register is empty
+		while( !(USARTx->SR & 0x00000040) ); 
+		USART_SendData(USARTx, *s);
+		*s++;
+	}
+}
+
+void USART_put(USART_TypeDef* USARTx, char s){
+		// wait until data register is empty
+		while( !(USARTx->SR & 0x00000040) ); 
+		USART_SendData(USARTx, s);
+}
+
+int main(void) {
+
+init_USART2(9600); // initialize USART2 @ 9600 baud
+
+//  USART_puts(USART2, "Init complete! Hello World!\r\n"); // just send a message to indicate that it works
+
+// printvalue(output); // prints output
+
+while(1);
+}
+
+void printvalue(uint16_t display)
+{
+	d[0]=0;
+	d[1]=0;
+	d[2]=0;
+	d[3]=0;
+	d[4]=0;
+	n = display;
+	temp = n; // temporary storage 
+	z=1; // value to ensure 0 gets printed
+	
+	while(temp!=0){
+		temp=temp/10;
+		i++;
+	}
+	
+	while(i!=0){
+		a=n%10;
+		c=a | 0x30;
+		d[i-1] = a | 0x30;
+		n=n/10;
+		i--;
+		z=0;
+	}
+	if(z==0){
+	USART_puts(USART2, d); // send current voltage value
+	USART_puts(USART2, " \r\n"); // just returns to next line
+	}
+	else{
+	USART_puts(USART2, "0\r\n"); // send current voltage value
+	}
+	i=0;
+}
+
+void init_USART2(uint32_t baudrate){
+
+	GPIO_InitTypeDef GPIO_InitStructure;
+	USART_InitTypeDef USART_InitStructure;
+
+	/* enable peripheral clock for USART2 */
+	RCC_APB1PeriphClockCmd(RCC_APB1Periph_USART2, ENABLE);
+
+
+	/* GPIOA clock enable */
+	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
+
+	/* GPIOA Configuration:  USART2 TX on PA2 */
+	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_2 | GPIO_Pin_3;
+	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF;
+	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+	GPIO_InitStructure.GPIO_OType = GPIO_OType_PP;
+	GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_UP ;
+	GPIO_Init(GPIOA, &GPIO_InitStructure);
+
+	/* Connect USART2 pins to AF2 */
+	// TX = PA2, RX = PA3
+	GPIO_PinAFConfig(GPIOA, GPIO_PinSource2, GPIO_AF_USART2);
+	GPIO_PinAFConfig(GPIOA, GPIO_PinSource3, GPIO_AF_USART2);
+
+	USART_InitStructure.USART_BaudRate = baudrate;
+	USART_InitStructure.USART_WordLength = USART_WordLength_8b;
+	USART_InitStructure.USART_StopBits = USART_StopBits_1;
+	USART_InitStructure.USART_Parity = USART_Parity_No;
+	USART_InitStructure.USART_HardwareFlowControl = USART_HardwareFlowControl_None;
+	USART_InitStructure.USART_Mode = USART_Mode_Tx | USART_Mode_Rx;
+	USART_Init(USART2, &USART_InitStructure);
+
+	USART_Cmd(USART2, ENABLE); // enable USART2
+
+}
+
+void USART2_IRQHandler(void){
+
+	// check if the USART1 receive interrupt flag was set
+	if( USART_GetITStatus(USART2, USART_IT_RXNE) ){
+
+		static uint8_t cnt = 0; // this counter is used to determine the string length
+		char t = USART2->DR; // the character from the USART1 data register is saved in t
+
+		/* check if the received character is not the LF character (used to determine end of string) 
+		 * or the if the maximum string length has been been reached 
+		 */
+		if( (t != '\n') && (cnt < MAX_STRLEN) ){ 
+			received_string[cnt] = t;
+			cnt++;
+		}
+		else{ // otherwise reset the character counter and print the received string
+			cnt = 0;
+			USART_puts(USART2, received_string);
+		}
+	}
+}

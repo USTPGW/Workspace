@@ -1,0 +1,391 @@
+/**
+  ******************************************************************************
+  * @file    TIM_PWM_Input/main.c 
+  * @author  MCD Application Team
+  * @version V1.0.0
+  * @date    19-September-2011
+  * @brief   Main program body
+  ******************************************************************************
+  * @attention
+  *
+  * THE PRESENT FIRMWARE WHICH IS FOR GUIDANCE ONLY AIMS AT PROVIDING CUSTOMERS
+  * WITH CODING INFORMATION REGARDING THEIR PRODUCTS IN ORDER FOR THEM TO SAVE
+  * TIME. AS A RESULT, STMICROELECTRONICS SHALL NOT BE HELD LIABLE FOR ANY
+  * DIRECT, INDIRECT OR CONSEQUENTIAL DAMAGES WITH RESPECT TO ANY CLAIMS ARISING
+  * FROM THE CONTENT OF SUCH FIRMWARE AND/OR THE USE MADE BY CUSTOMERS OF THE
+  * CODING INFORMATION CONTAINED HEREIN IN CONNECTION WITH THEIR PRODUCTS.
+  *
+  * <h2><center>&copy; COPYRIGHT 2011 STMicroelectronics</center></h2>
+  ******************************************************************************
+  */ 
+
+/* Includes ------------------------------------------------------------------*/
+#include "stm32f4_discovery.h"
+#include <stm32f4xx_tim.h>
+
+/** @addtogroup STM32F4_Discovery_Peripheral_Examples
+  * @{
+  */
+
+/** @addtogroup TIM_PWM_Input
+  * @{
+  */ 
+
+/* Private typedef -----------------------------------------------------------*/
+/* Private define ------------------------------------------------------------*/
+/* Private macro -------------------------------------------------------------*/
+/* Private variables ---------------------------------------------------------*/
+TIM_ICInitTypeDef  TIM_ICInitStructure;
+TIM_TimeBaseInitTypeDef  TIM_TimeBaseStructure;
+TIM_OCInitTypeDef  TIM_OCInitStructure;
+
+/* Private function prototypes -----------------------------------------------*/
+void TIM_Config(void);
+void TIM4_IRQHandler(void);
+void PWM_In(uint16_t Channel);
+void PWM_Out(uint16_t pulse);
+void init_USART2(uint32_t baudrate);
+void printvalue(uint16_t display);
+
+void Delay(__IO uint32_t nCount) {
+   while(nCount--) {
+  }
+}
+
+void USART_puts(USART_TypeDef* USARTx, volatile char *s){
+
+	while(*s){
+		// wait until data register is empty
+		while( !(USARTx->SR & 0x00000040) ); 
+		USART_SendData(USARTx, *s);
+		*s++;
+	}
+}
+
+void USART_put(USART_TypeDef* USARTx, char s){
+		// wait until data register is empty
+		while( !(USARTx->SR & 0x00000040) ); 
+		USART_SendData(USARTx, s);
+}
+
+/* Private functions ---------------------------------------------------------*/
+
+/**
+  * @brief  Main program
+  * @param  None
+  * @retval None
+  */
+	
+int dutycycle;
+int dutycycle1;
+int frequency;
+int frequency1;
+int pwm;
+int pwm1;
+int pitch;
+int count;
+uint16_t PrescalerValue = 0;
+int i;
+char d[5] = {0,0,0,0,0};
+char c;
+int a;
+int n;
+int temp;
+int z;
+	
+int main(void)
+{
+  /*!< At this stage the microcontroller clock setting is already configured, 
+       this is done through SystemInit() function which is called from startup
+       file (startup_stm32f4xx.s) before to branch to application main.
+       To reconfigure the default setting of SystemInit() function, refer to
+       system_stm32f4xx.c file
+     */
+       
+  /* TIM Configuration */
+  TIM_Config();
+	
+	PWM_Out(30);
+	
+	init_USART2(9600);
+
+  PWM_In(TIM_Channel_2);
+	Delay(10000000);
+	frequency = TIM_GetCapture2(TIM4);
+	Delay(10000000);
+	
+	while(frequency == 0)
+	{
+	PWM_In(TIM_Channel_2);
+	Delay(10000000);
+	frequency = TIM_GetCapture2(TIM4);
+	Delay(10000000);
+	}
+
+  while (1){		
+		PWM_In(TIM_Channel_2);
+		/*frequency1 = TIM_GetCapture2(TIM4);
+		Delay(1000000);*/
+		dutycycle1 = TIM_GetCapture1(TIM4);
+		Delay(1000000);
+		pwm1 = ((dutycycle1*10000)/(frequency));
+		
+		PWM_In(TIM_Channel_1);
+		/*frequency = TIM_GetCapture2(TIM4);
+		Delay(1000000);*/
+		dutycycle = TIM_GetCapture1(TIM4);
+		Delay(1000000);
+		pwm = ((dutycycle*10000)/(frequency));
+		
+		pitch = pwm / 15;
+		
+		PWM_Out(pitch);
+		
+		printvalue(pitch); // prints output
+		//USART_puts(USART2, "a\r\n"); // just send a message to indicate that it works
+		
+		Delay(100000);
+		
+	};
+}
+
+void printvalue(uint16_t display)
+{
+	d[0]=0;
+	d[1]=0;
+	d[2]=0;
+	d[3]=0;
+	d[4]=0;
+	n = display;
+	temp = n; // temporary storage 
+	z=1; // value to ensure 0 gets printed
+	
+	while(temp!=0){
+		temp=temp/10;
+		i++;
+	}
+	
+	while(i!=0){
+		a=n%10;
+		c=a | 0x30;
+		d[i-1] = a | 0x30;
+		n=n/10;
+		i--;
+		z=0;
+	}
+	if(z==0){
+	USART_puts(USART2, d); // send current voltage value
+	USART_puts(USART2, " \r\n"); // just returns to next line
+	}
+	else{
+	USART_puts(USART2, "0\r\n"); // send current voltage value
+	}
+	i=0;
+}
+
+void PWM_In(uint16_t Channel)
+{
+	/* Compute the prescaler value */
+  PrescalerValue = (uint16_t) ((SystemCoreClock / 2) / 500000) - 1;
+
+  /* Time base configuration */
+  TIM_TimeBaseStructure.TIM_Period = 65535;
+  TIM_TimeBaseStructure.TIM_Prescaler = 128;
+  TIM_TimeBaseStructure.TIM_ClockDivision = 0;
+  TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
+	
+	TIM_TimeBaseInit(TIM4, &TIM_TimeBaseStructure);
+	
+	/* TIM4 configuration: PWM Input mode ------------------------
+     The external signal is connected to TIM4 CH3 pin (PB.08), 
+     The Rising edge is used as active edge,
+     The TIM4 CCR2 is used to compute the frequency value 
+     The TIM4 CCR1 is used to compute the duty cycle value
+  ------------------------------------------------------------ */
+
+  TIM_ICInitStructure.TIM_Channel = Channel;
+  TIM_ICInitStructure.TIM_ICPolarity = TIM_ICPolarity_Rising;
+  TIM_ICInitStructure.TIM_ICSelection = TIM_ICSelection_DirectTI;
+  TIM_ICInitStructure.TIM_ICPrescaler = TIM_ICPSC_DIV1;
+  TIM_ICInitStructure.TIM_ICFilter = 0x0;
+
+  TIM_PWMIConfig(TIM4, &TIM_ICInitStructure);
+
+  /* Select the TIM4 Input Trigger: TI2FP2 */
+  TIM_SelectInputTrigger(TIM4, TIM_TS_TI2FP2);
+
+  /* Select the slave Mode: Reset Mode */
+  TIM_SelectSlaveMode(TIM4, TIM_SlaveMode_Reset);
+  TIM_SelectMasterSlaveMode(TIM4,TIM_MasterSlaveMode_Enable);
+
+  /* TIM enable counter */
+  TIM_Cmd(TIM4, ENABLE);
+
+  /* Enable the CC2 Interrupt Request */
+  // TIM_ITConfig(TIM4, TIM_IT_CC2, ENABLE); // causes bad things
+}
+
+void PWM_Out(uint16_t pulse){
+	if(pulse>70){
+		pulse=70;}
+		
+	if(pulse<30){
+		pulse=30;}
+		
+	/* Compute the prescaler value */
+	/* ((SystemCoreClock /2) / 33333) == 50 Hz Signal*/
+  PrescalerValue = (uint16_t) ((SystemCoreClock /2) / 33333) - 1;
+
+  /* Time base configuration */
+  TIM_TimeBaseStructure.TIM_Period = 665; // 665 original value
+  TIM_TimeBaseStructure.TIM_Prescaler = (PrescalerValue);
+  TIM_TimeBaseStructure.TIM_ClockDivision = 0;
+  TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
+
+  TIM_TimeBaseInit(TIM3, &TIM_TimeBaseStructure);
+	
+	/* PWM1 Mode configuration: Channel1 */
+  TIM_OCInitStructure.TIM_OCMode = TIM_OCMode_PWM1;
+  TIM_OCInitStructure.TIM_OutputState = TIM_OutputState_Enable;
+  TIM_OCInitStructure.TIM_Pulse = pulse;
+  TIM_OCInitStructure.TIM_OCPolarity = TIM_OCPolarity_High;
+
+  TIM_OC1Init(TIM3, &TIM_OCInitStructure);
+	TIM_OC2Init(TIM3, &TIM_OCInitStructure);
+
+  TIM_OC1PreloadConfig(TIM3, TIM_OCPreload_Enable);
+	TIM_OC2PreloadConfig(TIM3, TIM_OCPreload_Enable);
+	
+  /*PWM1 Mode configuration: Channel2 */
+  /*TIM_OCInitStructure.TIM_OutputState = TIM_OutputState_Enable;
+  TIM_OCInitStructure.TIM_Pulse = pulse;
+
+  TIM_OC2Init(TIM3, &TIM_OCInitStructure);
+
+  TIM_OC2PreloadConfig(TIM3, TIM_OCPreload_Enable);*/
+	
+	/* TIM3 enable counter */
+  TIM_Cmd(TIM3, ENABLE);
+}
+
+
+/**
+  * @brief  Configure the TIM4 Pins.
+  * @param  None
+  * @retval None
+  */
+void TIM_Config(void)
+{
+  GPIO_InitTypeDef GPIO_InitStructure;
+  NVIC_InitTypeDef NVIC_InitStructure;
+	
+	/* TIM3 clock enable */
+  RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM3, ENABLE);
+
+  /* TIM4 clock enable */
+  RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM4, ENABLE);
+
+  /* GPIOB clock enable */
+  RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOB, ENABLE);
+	
+	/* GPIOC clock enable */
+  RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOC, ENABLE);
+  
+  /* TIM4 chennel2 configuration : PB.06 */
+  GPIO_InitStructure.GPIO_Pin   = GPIO_Pin_6 | GPIO_Pin_7;
+  GPIO_InitStructure.GPIO_Mode  = GPIO_Mode_AF;
+  GPIO_InitStructure.GPIO_Speed = GPIO_Speed_100MHz;
+  GPIO_InitStructure.GPIO_OType = GPIO_OType_PP;
+  GPIO_InitStructure.GPIO_PuPd  = GPIO_PuPd_UP ;
+  GPIO_Init(GPIOB, &GPIO_InitStructure);
+	
+		/* GPIOC Configuration: TIM3 CH1 (PC6) and TIM3 CH2 (PC7) and TIM3 CH3 (PC8) */
+  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_6 | GPIO_Pin_7 | GPIO_Pin_8;
+  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF;
+  GPIO_InitStructure.GPIO_Speed = GPIO_Speed_100MHz;
+  GPIO_InitStructure.GPIO_OType = GPIO_OType_PP;
+  GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_UP ;
+  GPIO_Init(GPIOC, &GPIO_InitStructure); 
+  
+  /* Connect TIM4 pin2 to AF2 */
+  GPIO_PinAFConfig(GPIOB, GPIO_PinSource6, GPIO_AF_TIM4);
+	GPIO_PinAFConfig(GPIOB, GPIO_PinSource7, GPIO_AF_TIM4);
+	
+	/* Connect TIM3 pins to AF2 */  
+  GPIO_PinAFConfig(GPIOC, GPIO_PinSource6, GPIO_AF_TIM3);
+  GPIO_PinAFConfig(GPIOC, GPIO_PinSource7, GPIO_AF_TIM3); 
+	GPIO_PinAFConfig(GPIOC, GPIO_PinSource8, GPIO_AF_TIM3);
+
+  /* Enable the TIM4 global Interrupt */
+  NVIC_InitStructure.NVIC_IRQChannel = TIM4_IRQn;
+  NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
+  NVIC_InitStructure.NVIC_IRQChannelSubPriority = 1;
+  NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
+  NVIC_Init(&NVIC_InitStructure);
+
+}
+
+void init_USART2(uint32_t baudrate){
+
+	GPIO_InitTypeDef GPIO_InitStructure;
+	USART_InitTypeDef USART_InitStructure;
+
+	/* enable peripheral clock for USART2 */
+	RCC_APB1PeriphClockCmd(RCC_APB1Periph_USART2, ENABLE);
+
+
+	/* GPIOA clock enable */
+	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
+
+	/* GPIOA Configuration:  USART2 TX on PA2 */
+	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_2;
+	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF;
+	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+	GPIO_InitStructure.GPIO_OType = GPIO_OType_PP;
+	GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_UP ;
+	GPIO_Init(GPIOA, &GPIO_InitStructure);
+
+	/* Connect USART2 pins to AF2 */
+	// TX = PA2
+	GPIO_PinAFConfig(GPIOA, GPIO_PinSource2, GPIO_AF_USART2);
+
+	USART_InitStructure.USART_BaudRate = baudrate;
+	USART_InitStructure.USART_WordLength = USART_WordLength_8b;
+	USART_InitStructure.USART_StopBits = USART_StopBits_1;
+	USART_InitStructure.USART_Parity = USART_Parity_No;
+	USART_InitStructure.USART_HardwareFlowControl = USART_HardwareFlowControl_None;
+	USART_InitStructure.USART_Mode = USART_Mode_Tx | USART_Mode_Rx;
+	USART_Init(USART2, &USART_InitStructure);
+
+	USART_Cmd(USART2, ENABLE); // enable USART2
+
+}
+
+#ifdef  USE_FULL_ASSERT
+
+/**
+  * @brief  Reports the name of the source file and the source line number
+  *         where the assert_param error has occurred.
+  * @param  file: pointer to the source file name
+  * @param  line: assert_param error line source number
+  * @retval None
+  */
+void assert_failed(uint8_t* file, uint32_t line)
+{
+  /* User can add his own implementation to report the file name and line number,
+     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+
+  while (1)
+	{}
+}
+#endif
+
+/**
+  * @}
+  */ 
+
+/**
+  * @}
+  */ 
+
+/******************* (C) COPYRIGHT 2011 STMicroelectronics *****END OF FILE****/

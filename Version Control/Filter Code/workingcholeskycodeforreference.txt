@@ -1,0 +1,70 @@
+// Unscented Kalman Filter File
+// Created by Dan Kassen
+// Hand-Converted to C from Matlab file written by previous senior design team
+
+#include <stm32f4xx.h>
+#include <misc.h>			
+#include <stm32f4xx_usart.h>
+#include <stm32f4xx_spi.h>
+#include <stm32f4xx_tim.h>
+#include <stm32f4xx_flash.h>
+#include "arm_math.h" 
+#include "math_helper.h" 
+
+double *cholesky(double *A, int n);
+void show_matrix(double *A, int n, double *B);
+ 
+int main() {
+    int n = 3;
+		int i,j;
+		double C[3][3];
+	
+		double B[] = {0, 0, 0,
+									0, 0, 0,
+									0, 0, 0};
+									
+    double m1[] = {25, 15, -5,
+                   15, 18,  0,
+                   -5,  0, 11};
+									 
+    double *c1 = cholesky(m1, n);
+		show_matrix(c1,n,B);
+		for(i=0;i<n;i++)
+		{
+			for(j=0;j<n;j++)
+			{
+				C[i][j] = B[i*n+j];
+			}
+		}
+		free(c1);
+									 
+		return 0;
+}
+
+double *cholesky(double *A, int n)
+{
+	int i, j, k;
+  double *L = (double*)calloc(n * n, sizeof(double));
+ 
+    for (i = 0; i < n; i++){
+        for (j = 0; j < (i+1); j++) {
+            double s = 0;
+            for (k = 0; k < j; k++)
+                s += L[i * n + k] * L[j * n + k];
+            L[i * n + j] = (i == j) ?
+                           sqrt(A[i * n + i] - s) :
+                           (1.0 / L[j * n + j] * (A[i * n + j] - s));
+        }
+			}
+ 
+    return L;
+}
+
+void show_matrix(double *A, int n, double *B) {
+	int i,j;
+	//double B[3][3];
+    for (i = 0; i < n; i++) {
+        for (j = 0; j < n; j++)
+            B[i*n+j] = A[i * n + j];
+    }
+}

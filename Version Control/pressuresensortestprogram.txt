@@ -1,0 +1,413 @@
+// Program to test Pressure Sensor's effectiveness in Water
+// Written by Dan Kassen with help from online STM32F4 Discovery Examples
+
+#include "stm32f4_discovery.h"
+#include <stm32f4xx_usart.h>
+
+
+/* Private typedef -----------------------------------------------------------*/
+typedef enum {FAILED = 0, PASSED = !FAILED} TestStatus;
+
+/* Private define ------------------------------------------------------------*/
+
+#define FLASH_USER_START_ADDR   ADDR_FLASH_SECTOR_2   /* Start @ of user Flash area */
+#define FLASH_USER_END_ADDR     ADDR_FLASH_SECTOR_5   /* End @ of user Flash area */
+
+/* Base address of the Flash sectors */
+#define ADDR_FLASH_SECTOR_0     ((uint32_t)0x08000000) /* Base @ of Sector 0, 16 Kbytes */
+#define ADDR_FLASH_SECTOR_1     ((uint32_t)0x08004000) /* Base @ of Sector 1, 16 Kbytes */
+#define ADDR_FLASH_SECTOR_2     ((uint32_t)0x08008000) /* Base @ of Sector 2, 16 Kbytes */
+#define ADDR_FLASH_SECTOR_3     ((uint32_t)0x0800C000) /* Base @ of Sector 3, 16 Kbytes */
+#define ADDR_FLASH_SECTOR_4     ((uint32_t)0x08010000) /* Base @ of Sector 4, 64 Kbytes */
+#define ADDR_FLASH_SECTOR_5     ((uint32_t)0x08020000) /* Base @ of Sector 5, 128 Kbytes */
+#define ADDR_FLASH_SECTOR_6     ((uint32_t)0x08040000) /* Base @ of Sector 6, 128 Kbytes */
+#define ADDR_FLASH_SECTOR_7     ((uint32_t)0x08060000) /* Base @ of Sector 7, 128 Kbytes */
+#define ADDR_FLASH_SECTOR_8     ((uint32_t)0x08080000) /* Base @ of Sector 8, 128 Kbytes */
+#define ADDR_FLASH_SECTOR_9     ((uint32_t)0x080A0000) /* Base @ of Sector 9, 128 Kbytes */
+#define ADDR_FLASH_SECTOR_10    ((uint32_t)0x080C0000) /* Base @ of Sector 10, 128 Kbytes */
+#define ADDR_FLASH_SECTOR_11    ((uint32_t)0x080E0000) /* Base @ of Sector 11, 128 Kbytes */
+
+#define DATA_32                 ((uint32_t)0x12345678)
+
+#define ADC3_DR_ADDRESS     ((uint32_t)0x4001224C)
+
+/* Private macro -------------------------------------------------------------*/
+/* Private variables ---------------------------------------------------------*/
+uint32_t StartSector = 0, EndSector = 0, Address = 0, i = 0 ;
+uint32_t Printaddress = 0;
+__IO uint32_t data32 = 0 , MemoryProgramStatus = 0 ;
+__IO uint16_t ADC3ConvertedValue = 0;
+__IO uint32_t ADC3ConvertedVoltage = 0;
+uint32_t n;
+uint32_t temp;
+uint32_t a;
+int z;
+char c;
+char d[10] = {0,0,0,0,0,0,0,0,0,0};
+int output;
+
+  
+/* Private function prototypes -----------------------------------------------*/
+/* Private functions ---------------------------------------------------------*/
+uint32_t GetSector(uint32_t Address);
+void Erase(void);
+void printvalue(uint32_t display);
+void ADC3_CH12_DMA_Config(void);
+void init_USART2(uint32_t baudrate);
+void init_GPIO(void);
+
+void Delay(__IO uint32_t nCount) {
+   while(nCount--) {
+  }
+}
+
+void USART_puts(USART_TypeDef* USARTx, volatile char *s){
+
+	while(*s){
+		// wait until data register is empty
+		while( !(USARTx->SR & 0x00000040) ); 
+		USART_SendData(USARTx, *s);
+		*s++;
+	}
+}
+
+void USART_put(USART_TypeDef* USARTx, char s){
+		// wait until data register is empty
+		while( !(USARTx->SR & 0x00000040) ); 
+		USART_SendData(USARTx, s);
+}
+
+/**
+  * @brief   Main program
+  * @param  None
+  * @retval None
+  */
+int main(void)
+{
+	init_GPIO(); // initializes gpio
+	
+	ADC3_CH12_DMA_Config();
+	
+	/* Start ADC3 Software Conversion */ 
+  ADC_SoftwareStartConv(ADC3);
+	
+	ADC3ConvertedVoltage = ADC3ConvertedValue *3300/0xFFF;
+	
+	init_USART2(9600); // initialize USART2 @ 9600 baud
+	
+	Address = FLASH_USER_START_ADDR;
+	Printaddress = FLASH_USER_START_ADDR;
+	
+	while(1)
+		{
+			ADC3ConvertedVoltage = ADC3ConvertedValue *3300/0xFFF;
+	
+			if(GPIOA->IDR & 0x0001){
+					while(Printaddress < Address)
+					{
+						output = (*(__IO uint32_t*) (Printaddress)); 
+						printvalue(output); // prints output
+						Printaddress = Printaddress + 4;
+					}
+						
+					Erase();
+					
+					Address = FLASH_USER_START_ADDR;
+					Printaddress = FLASH_USER_START_ADDR;
+					
+					USART_puts(USART2, " \r\n"); // just returns to next line
+					
+					Delay(10000000L); // add a small delay to debounce the switch 
+				} 
+				
+			else
+			{
+
+				/* Program the user Flash area word by word
+					(area defined by FLASH_USER_START_ADDR and FLASH_USER_END_ADDR) ***********/
+		
+				FLASH_Unlock();
+		
+				if(Address < FLASH_USER_END_ADDR)
+					{
+						FLASH_ProgramWord(Address, ADC3ConvertedVoltage);
+						Address = Address + 4;
+					}
+			
+						/* Lock the Flash to disable the flash control register access (recommended
+					to protect the FLASH memory against possible unwanted operation) *********/
+				FLASH_Lock(); 
+				}
+				
+			Delay(10000000L); // delay so data is not taken too quickly
+		}
+}
+
+void printvalue(uint32_t display)
+{
+	d[0]=0, d[1]=0, d[2]=0, d[3]=0, d[4]=0;
+	d[5]=0, d[6]=0, d[7]=0, d[8]=0, d[9]=0;
+	n = display;
+	temp = n; // temporary storage 
+	z=1; // value to ensure 0 gets printed
+	
+	while(temp!=0){
+		temp=temp/10;
+		i++;
+	}
+	
+	while(i!=0){
+		a=n%10;
+		c=a | 0x30;
+		d[i-1] = a | 0x30;
+		n=n/10;
+		i--;
+		z=0;
+	}
+	if(z==0){
+	USART_puts(USART2, d); // send current voltage value
+	USART_puts(USART2, " \r\n"); // just returns to next line
+	}
+	else{
+	USART_puts(USART2, "0\r\n"); // send current voltage value
+	}
+	i=0;
+}
+
+void ADC3_CH12_DMA_Config(void)
+{
+  ADC_InitTypeDef       ADC_InitStructure;
+  ADC_CommonInitTypeDef ADC_CommonInitStructure;
+  DMA_InitTypeDef       DMA_InitStructure;
+  GPIO_InitTypeDef      GPIO_InitStructure;
+
+  /* Enable ADC3, DMA2 and GPIO clocks ****************************************/
+  RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_DMA2 | RCC_AHB1Periph_GPIOC, ENABLE);
+  RCC_APB2PeriphClockCmd(RCC_APB2Periph_ADC3, ENABLE);
+
+  /* DMA2 Stream0 channel0 configuration **************************************/
+  DMA_InitStructure.DMA_Channel = DMA_Channel_2;  
+  DMA_InitStructure.DMA_PeripheralBaseAddr = (uint32_t)ADC3_DR_ADDRESS;
+  DMA_InitStructure.DMA_Memory0BaseAddr = (uint32_t)&ADC3ConvertedValue;
+  DMA_InitStructure.DMA_DIR = DMA_DIR_PeripheralToMemory;
+  DMA_InitStructure.DMA_BufferSize = 1;
+  DMA_InitStructure.DMA_PeripheralInc = DMA_PeripheralInc_Disable;
+  DMA_InitStructure.DMA_MemoryInc = DMA_MemoryInc_Disable;
+  DMA_InitStructure.DMA_PeripheralDataSize = DMA_PeripheralDataSize_HalfWord;
+  DMA_InitStructure.DMA_MemoryDataSize = DMA_MemoryDataSize_HalfWord;
+  DMA_InitStructure.DMA_Mode = DMA_Mode_Circular;
+  DMA_InitStructure.DMA_Priority = DMA_Priority_High;
+  DMA_InitStructure.DMA_FIFOMode = DMA_FIFOMode_Disable;         
+  DMA_InitStructure.DMA_FIFOThreshold = DMA_FIFOThreshold_HalfFull;
+  DMA_InitStructure.DMA_MemoryBurst = DMA_MemoryBurst_Single;
+  DMA_InitStructure.DMA_PeripheralBurst = DMA_PeripheralBurst_Single;
+  DMA_Init(DMA2_Stream0, &DMA_InitStructure);
+  DMA_Cmd(DMA2_Stream0, ENABLE);
+
+  /* Configure ADC3 Channel12 pin as analog input ******************************/
+  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_2;
+  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AN;
+  GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_NOPULL ;
+  GPIO_Init(GPIOC, &GPIO_InitStructure);
+
+  /* ADC Common Init **********************************************************/
+  ADC_CommonInitStructure.ADC_Mode = ADC_Mode_Independent;
+  ADC_CommonInitStructure.ADC_Prescaler = ADC_Prescaler_Div2;
+  ADC_CommonInitStructure.ADC_DMAAccessMode = ADC_DMAAccessMode_Disabled;
+  ADC_CommonInitStructure.ADC_TwoSamplingDelay = ADC_TwoSamplingDelay_5Cycles;
+  ADC_CommonInit(&ADC_CommonInitStructure);
+
+  /* ADC3 Init ****************************************************************/
+  ADC_InitStructure.ADC_Resolution = ADC_Resolution_12b;
+  ADC_InitStructure.ADC_ScanConvMode = DISABLE;
+  ADC_InitStructure.ADC_ContinuousConvMode = ENABLE;
+  ADC_InitStructure.ADC_ExternalTrigConvEdge = ADC_ExternalTrigConvEdge_None;
+  ADC_InitStructure.ADC_DataAlign = ADC_DataAlign_Right;
+  ADC_InitStructure.ADC_NbrOfConversion = 1;
+  ADC_Init(ADC3, &ADC_InitStructure);
+
+  /* ADC3 regular channel12 configuration *************************************/
+  ADC_RegularChannelConfig(ADC3, ADC_Channel_12, 1, ADC_SampleTime_3Cycles);
+
+ /* Enable DMA request after last transfer (Single-ADC mode) */
+  ADC_DMARequestAfterLastTransferCmd(ADC3, ENABLE);
+
+  /* Enable ADC3 DMA */
+  ADC_DMACmd(ADC3, ENABLE);
+
+  /* Enable ADC3 */
+  ADC_Cmd(ADC3, ENABLE);
+}
+
+void init_USART2(uint32_t baudrate){
+
+	GPIO_InitTypeDef GPIO_InitStructure;
+	USART_InitTypeDef USART_InitStructure;
+
+	/* enable peripheral clock for USART2 */
+	RCC_APB1PeriphClockCmd(RCC_APB1Periph_USART2, ENABLE);
+
+
+	/* GPIOA clock enable */
+	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
+
+	/* GPIOA Configuration:  USART2 TX on PA2 */
+	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_2;
+	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF;
+	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+	GPIO_InitStructure.GPIO_OType = GPIO_OType_PP;
+	GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_UP ;
+	GPIO_Init(GPIOA, &GPIO_InitStructure);
+
+	/* Connect USART2 pins to AF2 */
+	// TX = PA2
+	GPIO_PinAFConfig(GPIOA, GPIO_PinSource2, GPIO_AF_USART2);
+
+	USART_InitStructure.USART_BaudRate = baudrate;
+	USART_InitStructure.USART_WordLength = USART_WordLength_8b;
+	USART_InitStructure.USART_StopBits = USART_StopBits_1;
+	USART_InitStructure.USART_Parity = USART_Parity_No;
+	USART_InitStructure.USART_HardwareFlowControl = USART_HardwareFlowControl_None;
+	USART_InitStructure.USART_Mode = USART_Mode_Tx | USART_Mode_Rx;
+	USART_Init(USART2, &USART_InitStructure);
+
+	USART_Cmd(USART2, ENABLE); // enable USART2
+
+}
+
+void init_GPIO(void){
+
+	GPIO_InitTypeDef GPIO_InitStruct;
+
+	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOD, ENABLE);
+
+	GPIO_InitStruct.GPIO_Pin = GPIO_Pin_15 | GPIO_Pin_14 | GPIO_Pin_13 | GPIO_Pin_12; // we want to configure all LED GPIO pins
+	GPIO_InitStruct.GPIO_Mode = GPIO_Mode_OUT; 		// we want the pins to be an output
+	GPIO_InitStruct.GPIO_Speed = GPIO_Speed_2MHz; 	// this sets the GPIO modules clock speed
+	GPIO_InitStruct.GPIO_OType = GPIO_OType_PP; 	// this sets the pin type to push / pull (as opposed to open drain)
+	GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_NOPULL; 	// this sets the pullup / pulldown resistors to be inactive
+	GPIO_Init(GPIOD, &GPIO_InitStruct); 			// this finally passes all the values to the GPIO_Init function which takes care of setting the corresponding bits.
+
+	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
+
+	GPIO_InitStruct.GPIO_Pin = GPIO_Pin_0 | GPIO_Pin_1;		  // we want to configure PA0
+	GPIO_InitStruct.GPIO_Mode = GPIO_Mode_IN; 	  // we want it to be an input
+	GPIO_InitStruct.GPIO_Speed = GPIO_Speed_2MHz; //this sets the GPIO modules clock speed
+	GPIO_InitStruct.GPIO_OType = GPIO_OType_PP;   // this sets the pin type to push / pull (as opposed to open drain)
+	GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_DOWN;   // this enables the pulldown resistor --> we want to detect a high level
+	GPIO_Init(GPIOA, &GPIO_InitStruct);			  // this passes the configuration to the Init function which takes care of the low level stuff
+}
+
+void Erase(void){
+	/* Unlock the Flash to enable the flash control register access *************/ 
+  FLASH_Unlock();
+    
+  /* Erase the user Flash area
+    (area defined by FLASH_USER_START_ADDR and FLASH_USER_END_ADDR) ***********/
+
+  /* Clear pending flags (if any) */  
+  FLASH_ClearFlag(FLASH_FLAG_EOP | FLASH_FLAG_OPERR | FLASH_FLAG_WRPERR | 
+                  FLASH_FLAG_PGAERR | FLASH_FLAG_PGPERR|FLASH_FLAG_PGSERR); 
+
+  /* Get the number of the start and end sectors */
+  StartSector = GetSector(FLASH_USER_START_ADDR);
+  EndSector = GetSector(FLASH_USER_END_ADDR);
+
+  for (i = StartSector; i < EndSector; i += 8)
+  {
+    /* Device voltage range supposed to be [2.7V to 3.6V], the operation will
+       be done by word */ 
+    if (FLASH_EraseSector(i, VoltageRange_3) != FLASH_COMPLETE)
+    { 
+      /* Error occurred while sector erase. 
+         User can add here some code to deal with this error  */
+      while (1)
+      {
+      }
+    }
+  }
+	FLASH_Lock(); 
+}
+
+/**
+  * @brief  Gets the sector of a given address
+  * @param  None
+  * @retval The sector of a given address
+  */
+uint32_t GetSector(uint32_t Address)
+{
+  uint32_t sector = 0;
+  
+  if((Address < ADDR_FLASH_SECTOR_1) && (Address >= ADDR_FLASH_SECTOR_0))
+  {
+    sector = FLASH_Sector_0;  
+  }
+  else if((Address < ADDR_FLASH_SECTOR_2) && (Address >= ADDR_FLASH_SECTOR_1))
+  {
+    sector = FLASH_Sector_1;  
+  }
+  else if((Address < ADDR_FLASH_SECTOR_3) && (Address >= ADDR_FLASH_SECTOR_2))
+  {
+    sector = FLASH_Sector_2;  
+  }
+  else if((Address < ADDR_FLASH_SECTOR_4) && (Address >= ADDR_FLASH_SECTOR_3))
+  {
+    sector = FLASH_Sector_3;  
+  }
+  else if((Address < ADDR_FLASH_SECTOR_5) && (Address >= ADDR_FLASH_SECTOR_4))
+  {
+    sector = FLASH_Sector_4;  
+  }
+  else if((Address < ADDR_FLASH_SECTOR_6) && (Address >= ADDR_FLASH_SECTOR_5))
+  {
+    sector = FLASH_Sector_5;  
+  }
+  else if((Address < ADDR_FLASH_SECTOR_7) && (Address >= ADDR_FLASH_SECTOR_6))
+  {
+    sector = FLASH_Sector_6;  
+  }
+  else if((Address < ADDR_FLASH_SECTOR_8) && (Address >= ADDR_FLASH_SECTOR_7))
+  {
+    sector = FLASH_Sector_7;  
+  }
+  else if((Address < ADDR_FLASH_SECTOR_9) && (Address >= ADDR_FLASH_SECTOR_8))
+  {
+    sector = FLASH_Sector_8;  
+  }
+  else if((Address < ADDR_FLASH_SECTOR_10) && (Address >= ADDR_FLASH_SECTOR_9))
+  {
+    sector = FLASH_Sector_9;  
+  }
+  else if((Address < ADDR_FLASH_SECTOR_11) && (Address >= ADDR_FLASH_SECTOR_10))
+  {
+    sector = FLASH_Sector_10;  
+  }
+  else/*(Address < FLASH_END_ADDR) && (Address >= ADDR_FLASH_SECTOR_11))*/
+  {
+    sector = FLASH_Sector_11;  
+  }
+
+  return sector;
+}
+
+#ifdef  USE_FULL_ASSERT
+
+/**
+  * @brief  Reports the name of the source file and the source line number
+  *         where the assert_param error has occurred.
+  * @param  file: pointer to the source file name
+  * @param  line: assert_param error line source number
+  * @retval None
+  */
+void assert_failed(uint8_t* file, uint32_t line)
+{ 
+  /* User can add his own implementation to report the file name and line number,
+     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+
+  /* Infinite loop */
+  while (1)
+  {
+  }
+}
+#endif
+
