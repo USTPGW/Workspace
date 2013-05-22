@@ -1,0 +1,9 @@
+.\FATFS\stm32fxxx_it.o: ..\stm32fxxx_it.c
+.\FATFS\stm32fxxx_it.o: C:\Keil\ARM\Inc\ST\STM32F4xx\stm32f4xx.h
+.\FATFS\stm32fxxx_it.o: C:\Keil\ARM\CMSIS\Include\core_cm4.h
+.\FATFS\stm32fxxx_it.o: C:\Keil\ARM\ARMCC\bin\..\include\stdint.h
+.\FATFS\stm32fxxx_it.o: C:\Keil\ARM\CMSIS\Include\core_cmInstr.h
+.\FATFS\stm32fxxx_it.o: C:\Keil\ARM\CMSIS\Include\core_cmFunc.h
+.\FATFS\stm32fxxx_it.o: C:\Keil\ARM\CMSIS\Include\core_cm4_simd.h
+.\FATFS\stm32fxxx_it.o: C:\Keil\ARM\Inc\ST\STM32F4xx\system_stm32f4xx.h
+.\FATFS\stm32fxxx_it.o: ..\stm32f4xx_conf.h

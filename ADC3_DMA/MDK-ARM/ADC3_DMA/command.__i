@@ -1,0 +1,5 @@
+-c --cpu Cortex-M4.fp -D__RTX -D__MICROLIB -g -W -O0 --apcs=interwork --split_sections -I..\ -I..\..\..\..\Libraries\CMSIS\Include -I..\..\..\..\Libraries\CMSIS\ST\STM32F4xx\Include -I..\..\..\..\Libraries\STM32F4xx_StdPeriph_Driver\inc -I..\..\..\..\Utilities\STM32F4-Discovery 
+-I C:\Keil\ARM\RV31\INC 
+-I C:\Keil\ARM\CMSIS\Include 
+-I C:\Keil\ARM\Inc\ST\STM32F4xx 
+-DUSE_STDPERIPH_DRIVER -DSTM32F4XX -o ".\ADC3_DMA\command.o" --depend ".\ADC3_DMA\command.d" "..\command.c"

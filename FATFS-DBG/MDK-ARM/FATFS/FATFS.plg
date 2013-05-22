@@ -1,0 +1,23 @@
+<html>
+<body>
+<pre>
+<h1>µVision Build Log</h1>
+<h2>Project:</h2>
+C:\Keil\Workspace\FATFS-DBG\MDK-ARM\STM32F4-Discovery.uvproj
+Project File Date:  04/26/2013
+
+<h2>Output:</h2>
+Build target 'FATFS'
+compiling system_stm32f4xx.c...
+..\stm32f4xx_conf.h(40): error:  #5: cannot open source input file "stm32f4xx_adc.h": No such file or directory
+compiling main.c...
+..\stm32f4xx_conf.h(40): error:  #5: cannot open source input file "stm32f4xx_adc.h": No such file or directory
+compiling stm32fxxx_it.c...
+..\stm32f4xx_conf.h(40): error:  #5: cannot open source input file "stm32f4xx_adc.h": No such file or directory
+compiling stm32f4_discovery.c...
+..\stm32f4xx_conf.h(40): error:  #5: cannot open source input file "stm32f4xx_adc.h": No such file or directory
+compiling stm32f4_discovery_sdio_sd.c...
+..\stm32f4xx_conf.h(40): error:  #5: cannot open source input file "stm32f4xx_adc.h": No such file or directory
+compiling stm32f4xx_syscfg.c...
+stm32f4xx_syscfg.c: Error:  #5: cannot open source input file "..\..\..\Libraries\STM32F4xx_StdPeriph_Driver\src\stm32f4xx_syscfg.c": No such file or directory
+Target not created
